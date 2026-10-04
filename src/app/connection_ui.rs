@@ -1,12 +1,15 @@
 use super::*;
 use signal_forge::{bridge::Bridge, virtual_pair::VirtualPair};
-use std::{collections::VecDeque, path::Path};
+use std::path::Path;
+use signal_forge::{capture::{Capture, CaptureState}, inspector::{Inspector, DirectionFilter, timestamp_utc}};
 
 pub(super) struct BridgeView {
     bridge: Bridge,
     events: Receiver<Arc<TrafficEvent>>,
-    history: VecDeque<Arc<TrafficEvent>>,
-    paused: bool,
+    inspector: Inspector,
+    capture_path: String,
+    capture: Option<Capture>,
+    capture_error: Option<String>,
 }
 impl Workbench {
     fn create_pair(&mut self) {
@@ -52,8 +55,10 @@ impl Workbench {
                 self.bridges.push(BridgeView {
                     bridge,
                     events,
-                    history: VecDeque::new(),
-                    paused: false,
+                    inspector: Inspector::new(),
+                    capture_path: format!("bridge-{}.jsonl", signal_forge::inspector::timestamp_ns(std::time::SystemTime::now())),
+                    capture: None,
+                    capture_error: None,
                 });
                 self.error = None;
             }
@@ -74,9 +79,12 @@ impl Workbench {
         if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::B)) {
             self.start_bridge();
         }
+        if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::R)) {
+            if let Some(view) = self.bridges.first_mut() { view.toggle_capture(); }
+        }
         if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::M)) {
             for view in &mut self.bridges {
-                view.paused = !view.paused;
+                view.inspector.paused = !view.inspector.paused;
             }
         }
     }
@@ -173,40 +181,65 @@ impl Workbench {
         ui.small("RX on A → TX on B; RX on B → TX on A.");
     }
     pub(super) fn bridge_monitors(&mut self, ctx: &egui::Context) {
-        if self.bridges.is_empty() {
-            return;
-        }
+        if self.bridges.is_empty() { return; }
         let mut remove = None;
-        egui::TopBottomPanel::bottom("bridge-monitors").resizable(true).default_height(170.0).show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("bridge-monitors").resizable(true).min_height(170.0).default_height(280.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (index, view) in self.bridges.iter_mut().enumerate() {
-                    for event in view.events.try_iter().take(2048) {
-                        if !view.paused { view.history.push_back(event); }
+                    for event in view.events.try_iter().take(2048) { view.inspector.receive(event, &view.bridge.a); }
+                    if view.bridge.state() != signal_forge::bridge::BridgeState::Running {
+                        if let Some(capture) = &view.capture { capture.request_stop(); }
                     }
-                    while view.history.len() > 256 { view.history.pop_front(); }
                     ui.push_id(index, |ui| {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.strong(format!("Bridge {} ↔ {}", view.bridge.a.0, view.bridge.b.0));
                             ui.label(format!("{:?}", view.bridge.state()));
-                            ui.checkbox(&mut view.paused,"Pause display").on_hover_text("Ctrl+Shift+M toggles bridge monitor displays");
                             if ui.button("Stop / remove").clicked() { remove = Some(index); }
                         });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.selectable_value(&mut view.inspector.filter, DirectionFilter::Both, "Both directions");
+                            ui.selectable_value(&mut view.inspector.filter, DirectionFilter::AToB, "A → B");
+                            ui.selectable_value(&mut view.inspector.filter, DirectionFilter::BToA, "B → A");
+                            ui.checkbox(&mut view.inspector.deltas, "Delta times");
+                            ui.checkbox(&mut view.inspector.paused, "Pause display").on_hover_text("Capture and forwarding continue. Ctrl+Shift+M toggles all bridge displays.");
+                            ui.checkbox(&mut view.inspector.auto_scroll, "Auto-scroll");
+                            if ui.button("Clear display").clicked() { view.inspector.clear(); }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Capture file");
+                            let recording = view.capture.as_ref().is_some_and(|c| matches!(c.status().state, CaptureState::Recording | CaptureState::Finishing));
+                            ui.add_enabled(!recording, egui::TextEdit::singleline(&mut view.capture_path).desired_width(240.0));
+                            let finishing = view.capture.as_ref().is_some_and(|c| c.status().state == CaptureState::Finishing);
+                            if ui.add_enabled(!finishing, egui::Button::new(if recording { "Stop capture" } else { "Start capture" })).clicked() { view.toggle_capture(); }
+                        });
+                        if let Some(capture) = &view.capture {
+                            let status = capture.status();
+                            ui.small(format!("Capture {:?} · {} chunks · {} bytes · {} dropped", status.state, status.events, status.bytes, status.dropped));
+                            if status.dropped > 0 { ui.colored_label(Color32::YELLOW, "Capture is incomplete: its queue dropped events."); }
+                        } else { ui.small("JSON Lines · both directions · independent of filters/pause · Ctrl+Shift+R toggles first bridge capture"); }
+                        if let Some(error) = &view.capture_error { ui.colored_label(Color32::LIGHT_RED, error); }
                         let dropped = view.bridge.dropped_events();
                         if dropped > 0 { ui.colored_label(Color32::YELLOW,format!("{dropped} monitor events dropped; forwarding remains independent")); }
-                        egui::ScrollArea::vertical().id_salt("bridge-traffic").max_height(95.0).stick_to_bottom(true).show(ui, |ui| {
-                            for event in &view.history {
-                                let direction = if event.endpoint == view.bridge.a { "A → B" } else { "B → A" };
-                                ui.monospace(format!("#{:06}  {direction}  {}", event.sequence, traffic::ascii(&event.bytes)));
+                        let rows: Vec<_> = view.inspector.rows.iter().filter(|row| view.inspector.filter.accepts(row.direction)).collect();
+                        let row_height = ui.text_style_height(&egui::TextStyle::Monospace) * 3.0 + ui.spacing().item_spacing.y * 2.0;
+                        egui::ScrollArea::both().id_salt("bridge-traffic").max_height(150.0).auto_shrink([false,false]).stick_to_bottom(view.inspector.auto_scroll).show_rows(ui, row_height, rows.len(), |ui, range| {
+                            for index in range {
+                                let row = rows[index];
+                                let event = &row.event;
+                                let delta = if view.inspector.deltas { row.delta_ns.map(|ns| format!("  Δ {:+.3} ms", ns as f64 / 1_000_000.0)).unwrap_or_else(|| "  Δ —".into()) } else { String::new() };
+                                let gap = if row.missed_before > 0 { format!("  GAP: {} chunks", row.missed_before) } else { String::new() };
+                                for line in [format!("#{:06}  {}  {}{delta}{gap}", event.sequence, timestamp_utc(event.timestamp), row.direction.label()), format!("ASCII  {}", traffic::ascii(&event.bytes)), format!("HEX    {}", traffic::hex(&event.bytes))] {
+                                    ui.add(egui::Label::new(RichText::new(line).monospace()).wrap_mode(egui::TextWrapMode::Extend));
+                                }
                             }
                         });
                     });
                 }
             });
         });
-        if let Some(index) = remove {
-            self.bridges.remove(index);
-        }
+        if let Some(index) = remove { self.bridges.remove(index); }
     }
+
 }
 impl Drop for Workbench {
     fn drop(&mut self) {
@@ -215,5 +248,23 @@ impl Drop for Workbench {
             tab.endpoint.disconnect();
         }
         self.pairs.clear();
+    }
+}
+
+impl BridgeView {
+    fn toggle_capture(&mut self) {
+        if let Some(capture) = &self.capture {
+            if matches!(capture.status().state, CaptureState::Recording | CaptureState::Finishing) { capture.request_stop(); return; }
+        }
+        match Capture::start(Path::new(&self.capture_path), &self.bridge) {
+            Ok(capture) => { log::info!("Capture started: {}", capture.path.display()); self.capture = Some(capture); self.capture_error = None; }
+            Err(error) => self.capture_error = Some(error),
+        }
+    }
+}
+impl Drop for BridgeView {
+    fn drop(&mut self) {
+        self.bridge.stop();
+        if let Some(capture) = &mut self.capture { capture.finish(); }
     }
 }

@@ -79,6 +79,16 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
                 os.close(client)
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+b"], check=True)
         time.sleep(0.15)
+        subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+r"], check=True)
+        deadline = time.monotonic() + 3
+        capture_match = None
+        while time.monotonic() < deadline:
+            capture_match = re.search(r"Capture started: (.+)", log_path.read_text())
+            if capture_match:
+                break
+            time.sleep(0.05)
+        assert capture_match, log_path.read_text()
+        capture_path = Path(capture_match.group(1).strip())
         os.write(pairs[0][0], b"bridge A -> B\x00\xff")
         os.write(pairs[1][0], b"bridge B -> A\r\n")
         read_bytes(pairs[1][0], b"bridge A -> B\x00\xff")
@@ -88,10 +98,26 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
         os.write(pairs[0][0], b"forward while display paused")
         read_bytes(pairs[1][0], b"forward while display paused")
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+m"], check=True)
+        subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+r"], check=True)
+        deadline = time.monotonic() + 3
+        capture_lines = []
+        while time.monotonic() < deadline:
+            capture_lines = [json.loads(line) for line in capture_path.read_text().splitlines()]
+            if capture_lines and capture_lines[-1]["type"] == "footer":
+                break
+            time.sleep(0.05)
+        assert capture_lines[-1]["type"] == "footer", capture_lines
+        assert capture_lines[0]["format"] == "signal-forge-capture"
+        assert capture_lines[-1]["complete"] is True
+        traffic = [line for line in capture_lines if line["type"] == "event"]
+        for direction, expected in [("a_to_b", b"bridge A -> B\x00\xffforward while display paused"), ("b_to_a", b"bridge B -> A\r\n")]:
+            actual = b"".join(bytes(line["raw_bytes"]) for line in traffic if line["direction"] == direction)
+            assert actual == expected, (actual, expected)
+        assert all(int(line["timestamp_unix_ns"]) > 0 for line in traffic)
         time.sleep(0.2)
         subprocess.run(["import", "-window", "root", "/tmp/signal-forge-smoke.png"], check=True)
         subprocess.run(["convert", "/tmp/signal-forge-smoke.png", "-resize", "1280x", "-quality", "80", "/tmp/signal-forge-smoke.jpg"], check=True)
-        print("Graphical launch, selected/fixed preset targets, binary repeat, owned PTY creation, duplex bridging, paused monitoring, and no-auto-send checks passed.", flush=True)
+        print("Graphical launch, selected/fixed preset targets, binary repeat, owned PTY creation, duplex bridging, paused monitoring, JSONL capture export, and no-auto-send checks passed.", flush=True)
         if os.environ.get("SIGNAL_FORGE_REVIEW_IMAGE") == "1":
             print("SMOKE_IMAGE_BEGIN", flush=True)
             print(base64.b64encode(Path("/tmp/signal-forge-smoke.jpg").read_bytes()).decode(), flush=True)
@@ -106,6 +132,8 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
         if "window" in locals() and "pair_paths" in locals():
             assert process.returncode == 0, log_path.read_text()
         app_log.close()
+        if "capture_path" in locals():
+            capture_path.unlink(missing_ok=True)
         if "pair_paths" in locals():
             assert all(not Path(path).exists() for path in pair_paths), "Owned PTYs survived application shutdown"
         for master, slave in pairs:
