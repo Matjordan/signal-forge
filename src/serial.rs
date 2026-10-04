@@ -1,4 +1,5 @@
 use crate::{
+    bridge::{BridgePort, BridgeWriter},
     config::{FlowControl, Parity, SerialSettings},
     endpoint::{ConnectionState, Endpoint, EndpointError, EndpointId},
     repeat::{RepeatHandle, RepeatJob, RepeatSpec},
@@ -37,6 +38,7 @@ pub struct SerialEndpoint {
     tx: SyncSender<Command>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
+    bridge: BridgePort,
 }
 impl SerialEndpoint {
     pub fn open(settings: &SerialSettings, bus: TrafficBus) -> Result<Self, EndpointError> {
@@ -65,7 +67,7 @@ impl SerialEndpoint {
             FlowControl::Hardware => serialport::FlowControl::Hardware,
             FlowControl::Software => serialport::FlowControl::Software,
         };
-        let mut port = serialport::new(&settings.path, settings.baud)
+        let port = serialport::new(&settings.path, settings.baud)
             .data_bits(data_bits)
             .stop_bits(stop_bits)
             .parity(parity)
@@ -76,6 +78,10 @@ impl SerialEndpoint {
         let id = EndpointId(format!("serial:{}", settings.path));
         let state = Arc::new(Mutex::new(ConnectionState::Connected));
         let stop = Arc::new(AtomicBool::new(false));
+        let mut reader = port.try_clone().map_err(|e| EndpointError::Io(e.to_string()))?;
+        let writer = Arc::new(SerialWriter { port: Mutex::new(port), state: state.clone(), stop: stop.clone(), bus: bus.clone(), id: id.clone() });
+        let bridge = BridgePort::new(id.clone(), writer.clone());
+        let worker_bridge = bridge.clone();
         let (tx, rx) = mpsc::sync_channel::<Command>(64);
         let worker_state = state.clone();
         let worker_stop = stop.clone();
@@ -94,14 +100,7 @@ impl SerialEndpoint {
                             }
                             match rx.try_recv() {
                                 Ok(Command::Send(bytes)) => {
-                                    if !write_payload(
-                                        &mut *port,
-                                        &bytes,
-                                        &worker_stop,
-                                        None,
-                                        &bus,
-                                        &worker_id,
-                                    )? {
+                                    if !writer.write(&bytes, &worker_stop)? {
                                         return Ok(());
                                     }
                                 }
@@ -119,14 +118,7 @@ impl SerialEndpoint {
                         }
                         if let Some(job) = &mut repeat {
                             job.poll(Instant::now(), |bytes, cancelled| {
-                                write_payload(
-                                    &mut *port,
-                                    bytes,
-                                    &worker_stop,
-                                    Some(cancelled),
-                                    &bus,
-                                    &worker_id,
-                                )
+                                writer.write(bytes, cancelled)
                             })?;
                         }
                         if repeat.as_ref().is_some_and(|job| !job.is_active()) {
@@ -139,12 +131,13 @@ impl SerialEndpoint {
                             .map(|job| job.time_until_next(Instant::now()))
                             .unwrap_or(Duration::from_millis(20))
                             .clamp(Duration::from_millis(1), Duration::from_millis(20));
-                        port.set_timeout(timeout)
+                        reader.set_timeout(timeout)
                             .map_err(|e| EndpointError::Io(e.to_string()))?;
-                        match port.read(&mut buffer) {
+                        match reader.read(&mut buffer) {
                             Ok(0) => return Err(EndpointError::Io("serial device closed".into())),
                             Ok(count) => {
-                                bus.publish(worker_id.clone(), Direction::Rx, &buffer[..count])
+                                bus.publish(worker_id.clone(), Direction::Rx, &buffer[..count]);
+                                worker_bridge.receive(&buffer[..count]);
                             }
                             Err(e)
                                 if matches!(
@@ -164,12 +157,16 @@ impl SerialEndpoint {
                 // Active and still-queued repeat commands cancel when their owners drop.
                 drop(repeat);
                 let next = match result {
-                    Ok(()) => ConnectionState::Disconnected,
+                    Ok(()) => {
+                        let state = worker_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                        if matches!(state, ConnectionState::Fault(_)) { state } else { ConnectionState::Disconnected }
+                    },
                     Err(error) => {
                         log::error!("{}: {error}", worker_id.0);
                         ConnectionState::Fault(error.to_string())
                     }
                 };
+                worker_bridge.endpoint_closed(&format!("{next:?}"));
                 *worker_state.lock().unwrap_or_else(|e| e.into_inner()) = next;
             })
             .map_err(|e| EndpointError::Io(e.to_string()))?;
@@ -181,6 +178,7 @@ impl SerialEndpoint {
             tx,
             stop,
             worker: Some(worker),
+            bridge,
         })
     }
 }
@@ -225,7 +223,12 @@ impl Endpoint for SerialEndpoint {
             })?;
         Ok(handle)
     }
+    fn bridge_port(&self) -> Result<BridgePort, EndpointError> {
+        if self.state() != ConnectionState::Connected { return Err(EndpointError::Disconnected); }
+        Ok(self.bridge.clone())
+    }
     fn disconnect(&mut self) {
+        self.bridge.endpoint_closed("disconnected");
         self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.take() {
             if worker.join().is_err() {
@@ -267,4 +270,25 @@ fn write_payload(
         }
     }
     Ok(true)
+}
+
+struct SerialWriter {
+    port: Mutex<Box<dyn serialport::SerialPort>>,
+    state: Arc<Mutex<ConnectionState>>,
+    stop: Arc<AtomicBool>,
+    bus: TrafficBus,
+    id: EndpointId,
+}
+impl BridgeWriter for SerialWriter {
+    fn state(&self) -> ConnectionState { self.state.lock().unwrap_or_else(|e| e.into_inner()).clone() }
+    fn write(&self, bytes: &[u8], cancelled: &AtomicBool) -> Result<bool, EndpointError> {
+        if self.stop.load(Ordering::Acquire) { return Ok(false); }
+        let mut port = self.port.lock().unwrap_or_else(|e| e.into_inner());
+        let result = write_payload(&mut **port, bytes, &self.stop, Some(cancelled), &self.bus, &self.id);
+        if let Err(error) = &result {
+            *self.state.lock().unwrap_or_else(|e| e.into_inner()) = ConnectionState::Fault(error.to_string());
+            self.stop.store(true, Ordering::Release);
+        }
+        result
+    }
 }

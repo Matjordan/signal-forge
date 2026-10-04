@@ -31,5 +31,6 @@ pub trait Endpoint: Send {
     fn send(&self, bytes: Vec<u8>) -> Result<(), EndpointError>;
     fn start_repeat(&self, bytes: Vec<u8>, spec: RepeatSpec)
         -> Result<RepeatHandle, EndpointError>;
+    fn bridge_port(&self) -> Result<crate::bridge::BridgePort, EndpointError>;
     fn disconnect(&mut self);
 }

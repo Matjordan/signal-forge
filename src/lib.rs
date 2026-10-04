@@ -6,3 +6,5 @@ pub mod repeat;
 pub mod send;
 pub mod serial;
 pub mod traffic;
+pub mod virtual_pair;
+pub mod bridge;
