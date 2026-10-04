@@ -1,0 +1,18 @@
+[package]
+name = "signal-forge"
+version = "0.1.0"
+edition = "2021"
+description = "Linux serial-port workbench"
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+egui_dock = "0.16"
+serialport = { version = "4.7", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+
+[dev-dependencies]
+nix = { version = "0.29", features = ["term", "fs"] }
