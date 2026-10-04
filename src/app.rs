@@ -369,15 +369,17 @@ impl TabViewer for TerminalViewer<'_> {
                  input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
                  input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown))
             });
-            if older { tab.history_older(); }
-            if newer { tab.history_newer(); }
             let input = ui.add(
                 egui::TextEdit::singleline(&mut tab.input)
                     .id(input_id)
                     .desired_width((ui.available_width() - 70.0).max(100.0))
                     .hint_text("Payload · Enter sends · Up recalls"),
             );
-            if input.changed() && !older && !newer { tab.send_history.edited(); }
+            // Process text events before recall so a draft includes every character
+            // entered in this frame. The navigation key itself was consumed above.
+            if input.changed() { tab.send_history.edited(); }
+            if older { tab.history_older(); }
+            if newer { tab.history_newer(); }
             let clicked = ui.add_enabled(
                 tab.endpoint.state() == ConnectionState::Connected,
                 egui::Button::new("Send").fill(Color32::from_rgb(21, 99, 218)),
