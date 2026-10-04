@@ -103,7 +103,11 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
         deadline = time.monotonic() + 3
         capture_lines = []
         while time.monotonic() < deadline:
-            capture_lines = [json.loads(line) for line in capture_path.read_text().splitlines()]
+            try:
+                capture_lines = [json.loads(line) for line in capture_path.read_text().splitlines()]
+            except json.JSONDecodeError:  # A worker flush may still be writing the last line.
+                time.sleep(0.05)
+                continue
             if capture_lines and capture_lines[-1]["type"] == "footer":
                 break
             time.sleep(0.05)
