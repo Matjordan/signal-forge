@@ -359,7 +359,9 @@ impl TabViewer for TerminalViewer<'_> {
                         ui.selectable_value(&mut tab.ending, value, label);
                     }
                 });
-            let input_id = ui.make_persistent_id(("payload", tab.endpoint.id().0.clone()));
+            // A global endpoint-based ID stays stable as virtualized traffic rows
+            // are added above this editor or its terminal is moved in the dock.
+            let input_id = egui::Id::new(("terminal-payload", tab.endpoint.id().0.clone()));
             let focused = ui.memory(|memory| memory.has_focus(input_id));
             // Consume these keys before TextEdit: Enter otherwise surrenders focus,
             // and arrows would move the caret instead of recalling a command.

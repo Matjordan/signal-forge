@@ -59,6 +59,9 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
         read_bytes(pairs[0][0], bytes([0, 255]) * 3)
         assert not select.select([master for master, _ in pairs], [], [], 0.15)[0]
         def key(keys):
+            # Incoming traffic must not steal the editor's focus or history cursor.
+            for master, _ in pairs:
+                os.write(master, b"keyboard RX tick\r\n")
             subprocess.run(["xdotool", "key", "--window", window, keys], check=True)
             time.sleep(0.06)
 
