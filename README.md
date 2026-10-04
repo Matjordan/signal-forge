@@ -1,6 +1,6 @@
 # Signal Forge
 
-A Linux serial-port workbench implemented in Rust with egui/eframe. The initial implementation provides independently configured serial connections, dockable terminals, validated text/hex sending, independent repeated sends, saved preset profiles, owned virtual PTY pairs, and full-duplex bridges.
+A Linux serial-port workbench implemented in Rust with egui/eframe. The app provides independently configured serial connections, dockable terminals, validated text/hex sending, independent repeated sends, saved preset profiles, owned virtual PTY pairs, full-duplex bridges, streaming captures, and saved workspaces.
 
 ## Current implementation
 
@@ -39,7 +39,7 @@ The executable is `target/release/signal-forge`. To explicitly open devices at l
 4. Choose an explicit line ending: None, CR, LF, or CRLF. Click Send or press Enter in the payload input. Enter keeps the field focused so you can send again immediately. Press **Up** in that field to cycle through previously accepted commands, newest first; **Down** moves towards newer commands and restores your unsent draft. Each terminal retains its own latest 100 entries for this session. Recall restores encoding, escape handling, and line ending; manual sends, presets, and repeat starts each add one entry, consecutive identical commands are deduplicated, and rejected sends are excluded. Recalled repeat commands send once when you press Enter; use **Start repeat** to repeat them again. Invalid input is rejected before any bytes are queued. TX rows report bytes accepted by the serial writer.
 5. Set **Repeat every** in milliseconds, choose a finite count or **Until stopped**, and click **Start repeat**. The count includes the initial send. Each terminal has one independent repeat job; its progress counts fully written payloads. The job takes a snapshot of the encoded payload, so editing the send box does not alter an active repeat. **Stop repeat**, disconnecting, closing the tab, or a device fault stops further repeated writes. Bytes already accepted by the serial driver cannot be recalled. Intervals are best-effort and begin after each full write, without catch-up bursts.
 6. Toggle timestamps (UTC), hex rendering, and auto-scroll. Clear removes displayed history. Pause display discards new rows while serial I/O continues.
-7. Save port settings explicitly to `$XDG_CONFIG_HOME/signal-forge/workspace.json` (or `~/.config/signal-forge/workspace.json`). Saved devices are not opened or transmitted to automatically. Corrupt/unsupported configuration is reported and preserved; saving is disabled until the file is repaired.
+7. Save the workspace with **Save workspace** or **Ctrl+S**, or quit normally to save it automatically to `$XDG_CONFIG_HOME/signal-forge/workspace.json` (or `~/.config/signal-forge/workspace.json`). Restart restores split ratios, stacked/active tabs, floating window positions/sizes, terminal display and send options, per-device serial settings, recent devices, and the selected preset profile. Every restored terminal is disconnected: reconnect explicitly. Payload drafts, traffic history, repeats, bridges, captures, and owned PTYs are session-only and never restart automatically. Corrupt/unsupported configuration is reported and preserved; saving stays disabled until repair or **Back up original and reset workspace**. That recovery action keeps an exact numbered `.json.recovery-N` backup for manual recovery of settings. Version 1 port settings migrate to version 2 when next saved.
 
 Each terminal retains up to 2,000 rows. RX and TX have distinct labels and colors. Binary bytes are rendered with escapes in text mode. A bounded monitoring queue reports dropped events in the status bar. Monitoring is best-effort, not a lossless capture mechanism.
 
@@ -81,32 +81,49 @@ Captures use [versioned JSON Lines](./docs/capture-format.md), with raw byte arr
 - `bridge`: transport-neutral RX routes, serialized destination writes, lifecycle control, and independent directional monitoring.
 - `inspector`: bounded display history, UTC timestamp formatting, chronological deltas, and direction filters.
 - `capture`: streaming JSON Lines writer, independent bounded subscriptions, integrity summaries, and controlled shutdown.
-- `config`: versioned serial-setting persistence with explicit save and atomic file replacement.
+- `config` / `workspace`: validated versioned workspace persistence, v1 migration, disconnected restoration, backup recovery, and durable atomic replacement.
 - `app`: device controls, dock layout, bounded/virtualized terminal views, and send controls.
 
 A slow subscriber loses monitoring events instead of blocking a serial worker. Sequence numbers expose gaps. Bridges forward through a dedicated transport RX route into the destination writer, independently of the lossy monitor bus. Independent read handles keep both RX directions active while writes are serialized. Closing a terminal stops its worker and drops its device handle; closing the application drops all terminals.
 
-## Issue progress
+## Keyboard shortcuts
 
-The foundation (#1–#5), repeated sending (#6), and preset profiles (#7) are merged. Owned PTY pairs (#8) and full-duplex bridging (#9) are merged; bridge inspection and capture export (#10) are implemented in the current pass. Serial-device (#3) and interactive docking (#4) checks remain open for manual validation with physical hardware.
+| Shortcut | Action |
+| --- | --- |
+| Enter / Up / Down in payload | Send / recall older / return toward draft |
+| Ctrl+L | Focus the selected terminal payload (outside text editing) |
+| Ctrl+Shift+D | Disconnect selected terminal and stop its repeat/bridge |
+| Ctrl+W | Close selected terminal and disconnect it |
+| Ctrl+S | Save workspace |
+| Ctrl+1 … Ctrl+9 | Active profile presets (outside text editing) |
+| Ctrl+Shift+N / B | Create PTY pair / start bridge |
+| Ctrl+Shift+M / R | Pause bridge displays / toggle first bridge capture |
+| Ctrl+Q | Quit, save workspace, and finish capture/cleanup |
 
-Next in issue order: full workspace persistence (#11), expanded integration tests (#12), and packaging/usability (#13). Port settings and preset profiles are persisted today; dock layout, virtual-pair definitions, bridges, and display preferences are not yet saved.
+## Linux package
 
-## Manual smoke checklist
+Each passing CI run builds and uploads **signal-forge-linux-x86_64** with a release
+binary, desktop launcher, installer, documentation, linked-library list, and SHA-256
+checksum. Download it from the repository's **Actions** run, unzip the artifact,
+verify `sha256sum -c *.sha256`, unpack the tarball, and run `bash install.sh`.
+The default installation is `~/.local`; an optional path argument changes it.
+You can also run the included `bin/signal-forge` directly. The package targets
+Ubuntu 24.04 x86_64 or compatible newer glibc Linux with X11/Wayland and OpenGL.
 
-- Start under X11/Wayland; confirm the window and device refresh work.
-- Open two devices with independent settings and rearrange their tabs.
-- Send `test\r\n`, then `00 FF` in hex mode; verify bytes with a peer.
-- Reject an unknown escape and malformed hex without transmitting.
-- Run a finite repeat, verify its total bytes/count, then run and stop a continuous repeat on each of two ports.
-- Disconnect/close a repeating port and confirm the peer receives no further payloads.
-- Verify RX/TX labels, hex/text modes, timestamps, pause, clear, and auto-scroll.
-- Unplug a device, confirm an endpoint error, close its tab, then reconnect.
-- Create/edit/reorder/delete presets, export/import a profile, and verify one-click and keyboard sends to the selected terminal.
-- Create several virtual pairs, copy/open their paths in another program, exchange bytes both ways, then remove them and verify cleanup.
-- Bridge two serial devices or a serial device and a virtual pair; exchange binary data both ways, pause the bridge monitor, and verify forwarding continues.
-- Record a bridge capture while pausing/filtering the inspector; verify raw bytes and directions in JSONL and a complete footer after stopping.
-- Disconnect either bridged endpoint and verify the bridge faults without restarting automatically.
-- Save settings and restart; confirm no device opens or sends automatically.
+Build the same package locally with `bash scripts/package-linux.sh`. Configuration
+and captures are excluded from the archive. No GitHub release is published by CI;
+the downloadable artifact is available before merge for review.
 
-CI builds every target and runs unit and Linux PTY integration tests without physical hardware. The initial Linux CI build and unit/PTY tests passed. Local builds are unavailable in the implementation environment, which lacks Rust and has an unavailable network proxy. CI also starts the app under Xvfb with two real PTY endpoints; physical-device and interactive docking smoke validation remain manual.
+## Verification
+
+See the [manual Linux smoke checklist](docs/manual-smoke-test.md) for release and
+physical-device checks. CI runs pure encoding/scheduling/history tests and real
+Linux PTY flows for text/CRLF, arbitrary binary, independent endpoints, finite
+repeats/cancellation, concurrent duplex bridges/backpressure, disconnect/reopen,
+traffic filtering, capture integrity, and shutdown. Workspace tests cover migration,
+layout/options round trips, invalid/corrupt config preservation, and atomic saves.
+Xvfb GUI tests exercise presets, Enter/Up/Down, real forwarding/capture, restart
+without opening or transmitting, recovery, and graceful cleanup. The release archive
+is extracted, checksum-verified, installed into a temporary prefix, and launched
+with `--help` in CI. Physical adapters and electrical flow/parity behavior require
+a local bench and are not claimed as PTY test coverage.

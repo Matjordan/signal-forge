@@ -57,6 +57,8 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         process = subprocess.Popen(['target/debug/signal-forge'], env=env, stderr=log)
         window = window_for(process)
         assert not select.select([p[0] for p in pairs], [], [], .3)[0], 'Restore transmitted bytes'
+        log.flush()
+        assert (Path(directory) / 'app.log').read_text().count('Opened ') == 2, 'Restore opened a device'
         key(window, 'ctrl+s')
         restored = json.loads(config_path.read_text())
         assert restored == initial, (restored, initial)

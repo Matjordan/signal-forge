@@ -480,7 +480,10 @@ impl TabViewer for TerminalViewer<'_> {
             );
         }
         if let Some(error) = &tab.error {
-            ui.colored_label(Color32::LIGHT_RED, format!("{}: {error}", tab.settings.path));
+            ui.colored_label(
+                Color32::LIGHT_RED,
+                format!("{}: {error}", tab.settings.path),
+            );
         }
         ui.small(
             "Enter sends · Up cycles previous messages · Down returns to draft · History is per terminal.",
@@ -591,13 +594,22 @@ impl Workbench {
         }
     }
     fn connect(&mut self) {
-        if let Some((_, tab)) = self.dock.iter_all_tabs_mut().find(|(_, tab)| tab.settings.path == self.settings.path) {
+        if let Some((_, tab)) = self
+            .dock
+            .iter_all_tabs_mut()
+            .find(|(_, tab)| tab.settings.path == self.settings.path)
+        {
             if tab.endpoint.state() == ConnectionState::Connected {
                 self.error = Some(format!("{} already connected", self.settings.path));
                 return;
             }
             match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
-                Ok(endpoint) => { tab.endpoint = Box::new(endpoint); tab.error = None; self.selected = Some(tab.endpoint.id().clone()); self.error = None; }
+                Ok(endpoint) => {
+                    tab.endpoint = Box::new(endpoint);
+                    tab.error = None;
+                    self.selected = Some(tab.endpoint.id().clone());
+                    self.error = None;
+                }
                 Err(error) => self.error = Some(format!("{}: {error}", tab.settings.path)),
             }
             return;
@@ -714,10 +726,7 @@ impl eframe::App for Workbench {
                 ui.label("Serial Workbench");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add_enabled(
-                            self.config_recoverable,
-                            egui::Button::new("Save workspace"),
-                        )
+                        .add_enabled(self.config_recoverable, egui::Button::new("Save workspace"))
                         .clicked()
                     {
                         self.save_workspace();
