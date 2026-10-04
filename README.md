@@ -6,7 +6,7 @@ A Linux serial-port workbench implemented in Rust with egui/eframe. The initial 
 
 ![Signal Forge target UI](./a_detailed_widescreen_dark_themed_desktop_applicat.png)
 
-This concept image is the design reference for the finished application. The current implementation establishes a dark desktop shell with device navigation, configuration controls, dockable port terminals, and a status bar. Exact visual comparison remains pending because the implementation environment could not retrieve the image binary.
+This concept image is the design reference for the finished application. The current implementation follows its dark blue desktop shell, endpoint navigation, green connection indicators, per-pane configuration controls, black terminal surfaces, blue send/disconnect buttons, and dockable port tiles. The mockup's preset, sequence, virtual-pair, and bridge panels will be added as their issues are implemented.
 
 ## Build and run on Linux
 
@@ -25,12 +25,12 @@ cargo test --all-targets
 cargo build --release
 ```
 
-The executable is `target/release/signal-forge`. Your account needs read/write access to its serial devices; on many distributions this is provided by the `dialout` or `uucp` group. The application reports permission/open errors in its status bar.
+The executable is `target/release/signal-forge`. To explicitly open devices at launch, pass `--port /dev/ttyUSB0 --port /dev/ttyUSB1`. Your account needs read/write access to its serial devices; on many distributions this is provided by the `dialout` or `uucp` group. The application reports permission/open errors in its status bar.
 
 ## Using the workbench
 
 1. Refresh devices, choose a device or type an existing `/dev/pts/N` path, and set baud, data bits, parity, stop bits, and flow control.
-2. Open a terminal. Opening a second device initially splits the workspace side-by-side. Drag tabs to dock and rearrange them; closing a tab disconnects its device.
+2. Open a terminal. Opening a second device initially splits the workspace side-by-side. Drag tabs to dock and rearrange them; closing a tab disconnects its device. Each pane has Disconnect/Reconnect controls; disconnect to edit its settings, then reconnect.
 3. Choose Text or Hex bytes in that terminal. Text optionally interprets `\r`, `\n`, `\t`, `\0`, `\xNN`, and `\\`. Hex accepts pairs of digits, optionally separated by whitespace, such as `00 FF 0D 0A`.
 4. Choose an explicit line ending: None, CR, LF, or CRLF. Click Send or press Enter in the payload input. Invalid input is rejected before any bytes are queued. TX rows report bytes accepted by the serial writer.
 5. Toggle timestamps (UTC), hex rendering, and auto-scroll. Clear removes displayed history. Pause display discards new rows while serial I/O continues.
@@ -65,4 +65,4 @@ Next in issue order: repeated sending (#6), preset profiles (#7), owned PTY pair
 - Unplug a device, confirm an endpoint error, close its tab, then reconnect.
 - Save settings and restart; confirm no device opens or sends automatically.
 
-CI builds every target and runs unit and Linux PTY integration tests without physical hardware. This environment has no Rust toolchain and an unavailable network proxy, so local compilation, CI results, and GUI smoke validation have not yet been verified.
+CI builds every target and runs unit and Linux PTY integration tests without physical hardware. The initial Linux CI build and all eight unit/PTY tests passed. Local builds are unavailable in the implementation environment, which lacks Rust and has an unavailable network proxy. CI also starts the app under Xvfb with two real PTY endpoints; physical-device and interactive docking smoke validation remain manual.
