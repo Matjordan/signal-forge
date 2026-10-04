@@ -378,15 +378,16 @@ impl TabViewer for TerminalViewer<'_> {
             // Process text events before recall so a draft includes every character
             // entered in this frame. The navigation key itself was consumed above.
             if input.changed() { tab.send_history.edited(); }
-            if older { tab.history_older(); }
-            if newer { tab.history_newer(); }
+            let focused = input.has_focus();
+            if older && focused { tab.history_older(); }
+            if newer && focused { tab.history_newer(); }
             let clicked = ui.add_enabled(
                 tab.endpoint.state() == ConnectionState::Connected,
                 egui::Button::new("Send").fill(Color32::from_rgb(21, 99, 218)),
             ).clicked();
-            if clicked || enter {
+            if clicked || (enter && focused) {
                 tab.send();
-                if enter { input.request_focus(); }
+                if enter && focused { input.request_focus(); }
             }
         });
         ui.horizontal_wrapped(|ui| {
