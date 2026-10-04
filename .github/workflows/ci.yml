@@ -1,0 +1,28 @@
+name: Linux build and tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux native dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+      - name: Build desktop application
+        run: cargo build --locked --all-targets
+      - name: Unit and PTY integration tests
+        run: cargo test --locked --all-targets
+      - name: Graphical launch with two PTY endpoints
+        run: xvfb-run -a -s "-screen 0 1440x900x24" python3 scripts/smoke.py
+      - name: Upload graphical smoke screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-workbench-screenshot
+          path: /tmp/signal-forge-smoke.png
