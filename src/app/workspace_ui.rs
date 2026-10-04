@@ -226,6 +226,20 @@ impl Workbench {
                 }
             }
         }
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::O)) {
+            if let Some(id) = &self.selected {
+                if let Some((_, tab)) = self.dock.iter_all_tabs_mut().find(|(_, tab)| tab.endpoint.id() == id) {
+                    if tab.endpoint.state() != ConnectionState::Connected {
+                        tab.stop_repeat();
+                        tab.endpoint.disconnect();
+                        match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
+                            Ok(endpoint) => { tab.endpoint = Box::new(endpoint); tab.error = None; }
+                            Err(error) => tab.error = Some(error.to_string()),
+                        }
+                    }
+                }
+            }
+        }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::W)) {
             let location = self.selected.as_ref().and_then(|id| {
                 self.dock

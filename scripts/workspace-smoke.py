@@ -18,12 +18,13 @@ def window_for(process):
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         assert process.poll() is None, process.returncode
-        result = subprocess.run(['xdotool', 'search', '--name', '^Signal Forge$'], capture_output=True, text=True)
+        result = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '^Signal Forge$'], capture_output=True, text=True)
         if result.returncode == 0:
             window = result.stdout.splitlines()[0]
-            subprocess.run(['xdotool', 'windowfocus', '--sync', window], check=True)
-            time.sleep(.5)
-            return window
+            focused = subprocess.run(['xdotool', 'windowfocus', '--sync', window], capture_output=True)
+            if focused.returncode == 0:
+                time.sleep(.5)
+                return window
         time.sleep(.1)
     raise AssertionError('No application window')
 
@@ -47,11 +48,12 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         process = subprocess.Popen(args, env=env, stderr=log)
         window = window_for(process)
         # Change split ratio with the visible divider, then save via keyboard.
-        subprocess.run(['xdotool', 'mousemove', '--window', window, '707', '350', 'mousedown', '1', 'mousemove', '--window', window, '640', '350', 'mouseup', '1'], check=True)
+        subprocess.run(['xdotool', 'mousemove', '--window', window, '707', '350', 'mousedown', '1', 'sleep', '0.2', 'mousemove', '--window', window, '640', '350', 'sleep', '0.2', 'mouseup', '1'], check=True)
         key(window, 'ctrl+s')
         initial = json.loads(config_path.read_text())
         assert initial['version'] == 2
         assert initial['layout']['Split']['horizontal'] is True
+        assert abs(initial['layout']['Split']['fraction'] - .5) > .02, initial
         assert len(initial['ports']) == 2
         quit_app(process, window)
         process = subprocess.Popen(['target/debug/signal-forge'], env=env, stderr=log)
@@ -62,6 +64,15 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         key(window, 'ctrl+s')
         restored = json.loads(config_path.read_text())
         assert restored == initial, (restored, initial)
+        key(window, 'ctrl+shift+o')  # Explicitly reconnect selected terminal.
+        key(window, 'ctrl+l')
+        subprocess.run(['xdotool', 'type', '--clearmodifiers', 'restored'], check=True)
+        key(window, 'Return')
+        assert select.select([pairs[1][0]], [], [], 3)[0], 'Explicit reconnect/send failed'
+        assert os.read(pairs[1][0], 64) == b'restored'
+        key(window, 'ctrl+w')
+        key(window, 'ctrl+s')
+        assert 'Leaf' in json.loads(config_path.read_text())['layout'], 'Selected terminal did not close'
         quit_app(process, window)
         # Corrupt config must be preserved through ordinary save and clean quit.
         broken = b'{broken workspace JSON'
