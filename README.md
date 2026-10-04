@@ -2,6 +2,10 @@
 
 A Linux serial-port workbench implemented in Rust with egui/eframe. The initial implementation provides independently configured serial connections, dockable terminals, and validated text/hex sending.
 
+## Current implementation
+
+![Signal Forge running with two Linux PTYs](./docs/workbench.jpg)
+
 ## Target UI
 
 ![Signal Forge target UI](./a_detailed_widescreen_dark_themed_desktop_applicat.png)
@@ -51,7 +55,7 @@ A slow subscriber loses monitoring events instead of blocking a serial worker. S
 
 ## Issue progress
 
-This first implementation addresses the foundation (#1), event model (#2), serial management (#3), dockable terminals (#4), and manual send engine (#5). Linux build/run and graphical smoke validation must pass before calling these complete. PTY tests cover real byte flow, independent endpoints, and disconnect/reopen behavior, providing the first part of #12.
+This first implementation addresses the foundation (#1), event model (#2), serial management (#3), dockable terminals (#4), and manual send engine (#5). Linux build, formatting, all eight unit/PTY tests, and graphical launch with two PTYs pass in CI. Physical-device and interactive docking validation remain outstanding before closing these issues. PTY tests cover real byte flow, independent endpoints, and disconnect/reopen behavior, providing the first part of #12.
 
 Next in issue order: repeated sending (#6), preset profiles (#7), owned PTY pairs (#8), full-duplex bridging (#9), inspector/capture (#10), full workspace persistence (#11), expanded integration tests (#12), and packaging/usability (#13). Only port settings are persisted today; dock layout and profiles are not yet saved.
 

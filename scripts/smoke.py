@@ -1,5 +1,4 @@
 """Headless Linux launch smoke using real PTYs. Run under xvfb-run."""
-import base64
 import os
 import pty
 import subprocess
@@ -22,9 +21,7 @@ try:
         time.sleep(0.1)
     subprocess.run(["import", "-window", "root", "/tmp/signal-forge-smoke.png"], check=True)
     subprocess.run(["convert", "/tmp/signal-forge-smoke.png", "-resize", "1280x", "-quality", "80", "/tmp/signal-forge-smoke.jpg"], check=True)
-    print("SMOKE_IMAGE_BEGIN", flush=True)
-    print(base64.b64encode(open("/tmp/signal-forge-smoke.jpg", "rb").read()).decode(), flush=True)
-    print("SMOKE_IMAGE_END", flush=True)
+    print("Graphical launch succeeded with two PTYs; screenshot: /tmp/signal-forge-smoke.png", flush=True)
 finally:
     process.terminate()
     try:

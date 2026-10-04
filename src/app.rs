@@ -18,7 +18,7 @@ const ACCENT: Color32 = Color32::from_rgb(43, 145, 246);
 const GREEN: Color32 = Color32::from_rgb(89, 210, 118);
 
 struct Terminal {
-    endpoint: SerialEndpoint,
+    endpoint: Box<dyn Endpoint>,
     settings: SerialSettings,
     history: VecDeque<Arc<TrafficEvent>>,
     paused: bool,
@@ -34,9 +34,9 @@ struct Terminal {
     tx_bytes: u64,
 }
 impl Terminal {
-    fn new(endpoint: SerialEndpoint, settings: SerialSettings) -> Self {
+    fn new(endpoint: impl Endpoint + 'static, settings: SerialSettings) -> Self {
         Self {
-            endpoint,
+            endpoint: Box::new(endpoint),
             settings,
             history: VecDeque::new(),
             paused: false,
@@ -166,7 +166,7 @@ impl TabViewer for TerminalViewer<'_> {
                         tab.endpoint.disconnect();
                         match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
                             Ok(endpoint) => {
-                                tab.endpoint = endpoint;
+                                tab.endpoint = Box::new(endpoint);
                                 tab.error = None;
                             }
                             Err(error) => tab.error = Some(error.to_string()),
@@ -555,12 +555,24 @@ impl eframe::App for Workbench {
                     .max_height(180.0)
                     .show(ui, |ui| {
                         for path in &self.ports {
-                            if ui.selectable_label(self.settings.path == *path, path).clicked() {
-                                self.settings = self.config.ports.iter().find(|s| s.path == *path).cloned().unwrap_or_else(|| SerialSettings { path: path.clone(), ..Default::default() });
+                            if ui
+                                .selectable_label(self.settings.path == *path, path)
+                                .clicked()
+                            {
+                                self.settings = self
+                                    .config
+                                    .ports
+                                    .iter()
+                                    .find(|s| s.path == *path)
+                                    .cloned()
+                                    .unwrap_or_else(|| SerialSettings {
+                                        path: path.clone(),
+                                        ..Default::default()
+                                    });
                             }
                         }
                     });
-            ui.separator();
+                ui.separator();
                 self.settings_ui(ui);
             });
         egui::CentralPanel::default().show(ctx, |ui| {
