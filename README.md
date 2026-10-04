@@ -1,6 +1,6 @@
 # Signal Forge
 
-A Linux serial-port workbench implemented in Rust with egui/eframe. The initial implementation provides independently configured serial connections, dockable terminals, validated text/hex sending, independent repeated sends, and saved preset profiles.
+A Linux serial-port workbench implemented in Rust with egui/eframe. The initial implementation provides independently configured serial connections, dockable terminals, validated text/hex sending, independent repeated sends, saved preset profiles, owned virtual PTY pairs, and full-duplex bridges.
 
 ## Current implementation
 
@@ -10,7 +10,7 @@ A Linux serial-port workbench implemented in Rust with egui/eframe. The initial 
 
 ![Signal Forge target UI](./a_detailed_widescreen_dark_themed_desktop_applicat.png)
 
-This concept image is the design reference for the finished application. The current implementation follows its dark blue desktop shell, endpoint navigation, green connection indicators, per-pane configuration controls, black terminal surfaces, blue send/disconnect buttons, and dockable port tiles. The mockup's preset, sequence, virtual-pair, and bridge panels will be added as their issues are implemented.
+This concept image is the design reference for the finished application. The current implementation follows its dark blue desktop shell, endpoint navigation, green connection indicators, per-pane configuration controls, black terminal surfaces, blue send/disconnect buttons, and dockable port tiles. Preset profiles, virtual pairs, and bridges now have controls in the sidebars, with directional bridge monitors below the terminals.
 
 ## Build and run on Linux
 
@@ -51,6 +51,16 @@ Create named device/project profiles with **Create profile**. Changes are valida
 
 Use **Export profile** and **Import profile** with a JSON file path. The human-readable format is `{ "version": 1, "profile": { "name": "Bench", "presets": [...] } }`; it preserves all send and repeat settings. Import replaces a profile with the same name and rejects invalid payloads, schedules, or conflicting shortcuts before modifying the library. Shortcuts are **Ctrl+1** through **Ctrl+9**, scoped to the active profile and suppressed while editing text or a preset.
 
+## Virtual pairs and bridges
+
+In the left sidebar, enter a pair name and click **Create PTY pair** (or **Ctrl+Shift+N**). The two raw Linux PTY paths are displayed with **Copy path** and **Open A/B** actions. External programs can open either end; bytes written to A arrive at B and vice versa. Multiple pairs are independent. Optionally enter a writable **Link directory** to create `<name>-a` and `<name>-b` symlinks. Existing paths are never overwritten, and failed creation rolls back any link already created.
+
+**Remove pair** disconnects its app terminals and releases its relay and owned links. Closing the application does the same; **Ctrl+Q** closes the application normally. PTY paths last only for the lifetime of the pair. The internal relay uses bounded buffers and retains partial writes under backpressure; it does not require `socat`.
+
+Open two terminals, choose endpoints **A** and **B**, then click **Start full-duplex bridge** (or **Ctrl+Shift+B**). Bridges support serial devices and PTY paths using the same endpoint interface. Each endpoint can belong to one running bridge. RX from A is sent to B and RX from B is sent to A; manual and repeated sends remain available and serialize with bridge writes.
+
+The lower bridge monitor labels each direction **A → B** or **B → A**. **Pause display** (or **Ctrl+Shift+M** for all bridge monitors) discards new display rows while forwarding continues. **Stop / remove** leaves both endpoints open. Disconnecting either endpoint faults the bridge; restoring a connection requires starting a new bridge explicitly. Bounded monitor queues can drop display events without affecting forwarded bytes. Transport write failures fault the bridge; already accepted bytes cannot be recalled.
+
 ## Architecture
 
 - `endpoint`: stable IDs, connection states, errors, transport-independent asynchronous TX interface.
@@ -59,16 +69,18 @@ Use **Export profile** and **Import profile** with a JSON file path. The human-r
 - `send`: pure, all-or-nothing escape/hex encoding and explicit line endings.
 - `presets`: validated command/profile models, atomic persistence, and versioned JSON import/export.
 - `repeat`: transport-independent scheduling, finite counts, progress, and cancellation tokens; serial workers drive timers independently of GUI repainting.
+- `virtual_pair`: owned raw Linux PTYs, optional named links, and a bounded full-duplex relay.
+- `bridge`: transport-neutral RX routes, serialized destination writes, lifecycle control, and independent directional monitoring.
 - `config`: versioned serial-setting persistence with explicit save and atomic file replacement.
 - `app`: device controls, dock layout, bounded/virtualized terminal views, and send controls.
 
-A slow subscriber loses monitoring events instead of blocking a serial worker. Sequence numbers expose gaps. Future bridges must forward through a dedicated lossless worker RX route, rather than subscribe to the lossy monitor bus. Closing a terminal stops its worker and drops its device handle; closing the application drops all terminals.
+A slow subscriber loses monitoring events instead of blocking a serial worker. Sequence numbers expose gaps. Bridges forward through a dedicated transport RX route into the destination writer, independently of the lossy monitor bus. Independent read handles keep both RX directions active while writes are serialized. Closing a terminal stops its worker and drops its device handle; closing the application drops all terminals.
 
 ## Issue progress
 
-The merged initial implementation provides the foundation (#1), event model (#2), serial management (#3), dockable terminals (#4), and manual send engine (#5). Repeated sending (#6) and preset profiles (#7) are implemented in the next pass. Linux build, formatting, unit/PTY tests, and graphical launch with two PTYs pass in CI. Physical-device and interactive docking validation remain outstanding before closing these issues. PTY tests cover real byte flow, independent endpoints, and disconnect/reopen behavior, providing the first part of #12.
+The foundation (#1–#5), repeated sending (#6), and preset profiles (#7) are merged. Owned PTY pairs (#8) and full-duplex bridging (#9) are implemented in the current pass. Serial-device (#3) and interactive docking (#4) checks remain open for manual validation with physical hardware.
 
-Next in issue order: owned PTY pairs (#8), full-duplex bridging (#9), inspector/capture (#10), full workspace persistence (#11), expanded integration tests (#12), and packaging/usability (#13). Port settings and preset profiles are persisted today; dock layout and display preferences are not yet saved. Profiles are stored separately.
+Next in issue order: inspector/capture (#10), full workspace persistence (#11), expanded integration tests (#12), and packaging/usability (#13). Port settings and preset profiles are persisted today; dock layout, virtual-pair definitions, bridges, and display preferences are not yet saved.
 
 ## Manual smoke checklist
 
@@ -81,6 +93,9 @@ Next in issue order: owned PTY pairs (#8), full-duplex bridging (#9), inspector/
 - Verify RX/TX labels, hex/text modes, timestamps, pause, clear, and auto-scroll.
 - Unplug a device, confirm an endpoint error, close its tab, then reconnect.
 - Create/edit/reorder/delete presets, export/import a profile, and verify one-click and keyboard sends to the selected terminal.
+- Create several virtual pairs, copy/open their paths in another program, exchange bytes both ways, then remove them and verify cleanup.
+- Bridge two serial devices or a serial device and a virtual pair; exchange binary data both ways, pause the bridge monitor, and verify forwarding continues.
+- Disconnect either bridged endpoint and verify the bridge faults without restarting automatically.
 - Save settings and restart; confirm no device opens or sends automatically.
 
 CI builds every target and runs unit and Linux PTY integration tests without physical hardware. The initial Linux CI build and unit/PTY tests passed. Local builds are unavailable in the implementation environment, which lacks Rust and has an unavailable network proxy. CI also starts the app under Xvfb with two real PTY endpoints; physical-device and interactive docking smoke validation remain manual.

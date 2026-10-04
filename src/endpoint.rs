@@ -23,7 +23,7 @@ pub enum EndpointError {
 
 /// Transport-independent asynchronous TX interface. RX and successful TX are
 /// observed through TrafficBus; physical handles stay in transport workers.
-/// Future bridges should subscribe to a dedicated lossless RX route in workers.
+/// Bridges attach to the transport RX path and never subscribe to the monitor bus.
 pub trait Endpoint: Send {
     fn id(&self) -> &EndpointId;
     fn display_name(&self) -> &str;

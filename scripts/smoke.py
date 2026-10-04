@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
         read_bytes(pairs[0][0], bytes([0, 255]) * 3)
         assert not select.select([master for master, _ in pairs], [], [], 0.15)[0]
         # Create an owned pair through the same action as the UI button.
-        subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+v"], check=True)
+        subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+n"], check=True)
         deadline = time.monotonic() + 3
         match = None
         while time.monotonic() < deadline:
@@ -97,12 +97,14 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
             print(base64.b64encode(Path("/tmp/signal-forge-smoke.jpg").read_bytes()).decode(), flush=True)
             print("SMOKE_IMAGE_END", flush=True)
     finally:
-        subprocess.run(["xdotool", "windowclose", window], check=False) if "window" in locals() else process.terminate()
+        subprocess.run(["xdotool", "key", "--window", window, "ctrl+q"], check=False) if "window" in locals() else process.terminate()
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+        if "window" in locals() and "pair_paths" in locals():
+            assert process.returncode == 0, log_path.read_text()
         app_log.close()
         if "pair_paths" in locals():
             assert all(not Path(path).exists() for path in pair_paths), "Owned PTYs survived application shutdown"

@@ -30,8 +30,10 @@ impl Workbench {
             }
     }
     pub(super) fn connection_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Q)) { ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
+        if ctx.wants_keyboard_input() { return; }
         let modifiers = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
-        if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::V)) { self.create_pair(); }
+        if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::N)) { self.create_pair(); }
         if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::B)) { self.start_bridge(); }
         if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::M)) {
             for view in &mut self.bridges { view.paused = !view.paused; }
@@ -44,7 +46,7 @@ impl Workbench {
         ui.label("Link directory (optional)");
         ui.text_edit_singleline(&mut self.pair_directory);
         if ui.button("Create PTY pair").clicked() { self.create_pair(); }
-        ui.small("Ctrl+Shift+V creates a pair");
+        ui.small("Ctrl+Shift+N creates a pair");
         let mut open = None;
         let mut remove = None;
         for (index, pair) in self.pairs.iter().enumerate() {

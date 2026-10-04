@@ -102,3 +102,18 @@ fn serial_to_owned_pair_bridge_handles_binary_both_ways() {
     put(&mut peer,b"virtual\x80\0"); take(&mut master,b"virtual\x80\0");
     drop(virtual_endpoint); assert!(matches!(bridge.state(),BridgeState::Fault(_)));
 }
+
+#[test]
+fn bridge_large_concurrent_transfers_preserve_every_byte() {
+    let (ma,a,_sa)=endpoint(); let (mb,b,_sb)=endpoint();
+    let _bridge=Bridge::start(a.bridge_port().unwrap(),b.bridge_port().unwrap()).unwrap();
+    let forward:Vec<_>=(0..131072).map(|i|(i%256) as u8).collect();
+    let reverse:Vec<_>=(0..131072).map(|i|(255-i%256) as u8).collect();
+    let mut send_a=ma.try_clone().unwrap(); let mut send_b=mb.try_clone().unwrap();
+    thread::scope(|scope| {
+        scope.spawn(|| put(&mut send_a,&forward));
+        scope.spawn(|| put(&mut send_b,&reverse));
+        scope.spawn(|| take(&mut {ma},&reverse));
+        scope.spawn(|| take(&mut {mb},&forward));
+    });
+}
