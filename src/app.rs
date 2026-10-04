@@ -379,9 +379,7 @@ impl TabViewer for TerminalViewer<'_> {
             // A global endpoint-based ID stays stable as virtualized traffic rows
             // are added above this editor or its terminal is moved in the dock.
             let input_id = egui::Id::new(("terminal-payload", tab.endpoint.id().0.clone()));
-            let raw_shortcut = ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::ArrowDown));
             let focused = ui.memory(|memory| memory.has_focus(input_id));
-            let focus_before = focused;
             // Consume these keys before TextEdit: Enter otherwise surrenders focus,
             // and arrows would move the caret instead of recalling a command.
             let (enter, older, newer) = ui.input_mut(|input| {
@@ -406,7 +404,6 @@ impl TabViewer for TerminalViewer<'_> {
                 tab.send_history.edited();
             }
             let focused = input.has_focus();
-            if raw_shortcut { log::trace!("keyboard {} focus_before={focus_before} focused={focused} enter={enter} up={older} down={newer} mode={:?} length={} rect={:?}", tab.endpoint.id().0, tab.encoding, tab.input.len(), input.rect); }
             if older && focused {
                 tab.history_older();
             }
