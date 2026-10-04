@@ -17,5 +17,5 @@ s = Path('share/applications/signal-forge.desktop').read_text()
 s = s.replace('Exec=signal-forge', 'Exec="' + exe + '"')
 (prefix / 'share/applications/signal-forge.desktop').write_text(s)
 PY
-cp share/doc/signal-forge/* "$prefix/share/doc/signal-forge/"
+cp -R share/doc/signal-forge/. "$prefix/share/doc/signal-forge/"
 printf 'Installed Signal Forge in %s/bin\n' "$prefix"

@@ -11,7 +11,11 @@ trap 'rm -rf "$staging"' EXIT
 mkdir -p "$staging/$name/bin" "$staging/$name/share/applications" "$staging/$name/share/doc/signal-forge"
 install -m755 target/release/signal-forge "$staging/$name/bin/"
 install -m644 packaging/signal-forge.desktop "$staging/$name/share/applications/"
-cp README.md docs/*.md "$staging/$name/share/doc/signal-forge/"
+cp README.md "$staging/$name/share/doc/signal-forge/"
+cp -R docs "$staging/$name/share/doc/signal-forge/"
+if [[ -f a_detailed_widescreen_dark_themed_desktop_applicat.png ]]; then
+    cp a_detailed_widescreen_dark_themed_desktop_applicat.png "$staging/$name/share/doc/signal-forge/"
+fi
 install -m755 packaging/install.sh "$staging/$name/"
 ldd target/release/signal-forge > "$staging/$name/share/doc/signal-forge/linked-libraries.txt"
 tar -C "$staging" -czf "dist/$name.tar.gz" "$name"

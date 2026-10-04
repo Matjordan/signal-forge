@@ -40,6 +40,8 @@ jobs:
           bash install.sh "$RUNNER_TEMP/signal-forge-install"
           "$RUNNER_TEMP/signal-forge-install/bin/signal-forge" --help
           test -f "$RUNNER_TEMP/signal-forge-install/share/applications/signal-forge.desktop"
+          test -f "$RUNNER_TEMP/signal-forge-install/share/doc/signal-forge/docs/workbench.jpg"
+          test -f "$RUNNER_TEMP/signal-forge-install/share/doc/signal-forge/docs/manual-smoke-test.md"
       - uses: actions/upload-artifact@v4
         with:
           name: signal-forge-linux-x86_64
