@@ -18,7 +18,7 @@ try:
         if process.poll() is not None:
             raise RuntimeError(f"Application exited unexpectedly: {process.returncode}")
         for port, (master, _) in enumerate(pairs):
-            os.write(master, f"Device {port + 1}: status OK, sample {index}\\r\\n".encode())
+            os.write(master, f"Device {port + 1}: status OK, sample {index}\r\n".encode())
         time.sleep(0.1)
     subprocess.run(["import", "-window", "root", "/tmp/signal-forge-smoke.png"], check=True)
     subprocess.run(["convert", "/tmp/signal-forge-smoke.png", "-resize", "1280x", "-quality", "80", "/tmp/signal-forge-smoke.jpg"], check=True)

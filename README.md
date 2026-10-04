@@ -13,7 +13,7 @@ This concept image is the design reference for the finished application. The cur
 Install a current stable Rust toolchain with Cargo. On Debian/Ubuntu:
 
 ```sh
-sudo apt-get install build-essential pkg-config libudev-dev libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
+sudo apt-get install build-essential pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
 cargo run
 ```
 

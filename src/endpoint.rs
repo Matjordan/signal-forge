@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 pub struct EndpointId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConnectionState { Connected, Disconnected, Fault(String) }
+pub enum ConnectionState {
+    Connected,
+    Disconnected,
+    Fault(String),
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum EndpointError {

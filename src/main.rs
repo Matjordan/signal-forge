@@ -8,15 +8,30 @@ fn main() -> eframe::Result<()> {
         match arg.as_str() {
             "--port" => match args.next() {
                 Some(path) => initial_ports.push(path),
-                None => { eprintln!("--port requires a device path"); std::process::exit(2); }
+                None => {
+                    eprintln!("--port requires a device path");
+                    std::process::exit(2);
+                }
             },
-            "--help" | "-h" => { println!("Usage: signal-forge [--port /dev/ttyUSB0] ..."); return Ok(()); }
-            _ => { eprintln!("Unknown argument: {arg}"); std::process::exit(2); }
+            "--help" | "-h" => {
+                println!("Usage: signal-forge [--port /dev/ttyUSB0] ...");
+                return Ok(());
+            }
+            _ => {
+                eprintln!("Unknown argument: {arg}");
+                std::process::exit(2);
+            }
         }
     }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default().with_inner_size([1440.0,900.0]).with_min_inner_size([900.0,600.0]),
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_inner_size([1440.0, 900.0])
+            .with_min_inner_size([900.0, 600.0]),
         ..Default::default()
     };
-    eframe::run_native("Signal Forge", options, Box::new(move |cc| Ok(Box::new(app::Workbench::new(cc,initial_ports)))))
+    eframe::run_native(
+        "Signal Forge",
+        options,
+        Box::new(move |cc| Ok(Box::new(app::Workbench::new(cc, initial_ports)))),
+    )
 }
