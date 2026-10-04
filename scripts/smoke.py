@@ -7,6 +7,7 @@ import pty
 import re
 import select
 import subprocess
+import sys
 import tempfile
 import time
 import tty
@@ -40,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
     profile_path.write_text(json.dumps({"version": 1, "profiles": [{"name": "Bench", "presets": presets}]}))
     log_path = Path(config_dir) / "app.log"
     app_log = log_path.open("w")
-    process = subprocess.Popen(args, env=dict(os.environ, XDG_CONFIG_HOME=config_dir), stderr=app_log)
+    process = subprocess.Popen(args, env=dict(os.environ, XDG_CONFIG_HOME=config_dir, RUST_LOG="signal_forge=trace"), stderr=app_log)
     try:
         for index in range(40):
             if process.poll() is not None:
@@ -184,6 +185,13 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
             print(base64.b64encode(Path("/tmp/signal-forge-smoke.jpg").read_bytes()).decode(), flush=True)
             print("SMOKE_IMAGE_END", flush=True)
     finally:
+        if sys.exc_info()[0] is not None and "window" in locals():
+            print(log_path.read_text(), flush=True)
+            subprocess.run(["import", "-window", "root", "/tmp/signal-forge-smoke.png"], check=False)
+            subprocess.run(["convert", "/tmp/signal-forge-smoke.png", "-resize", "1280x", "/tmp/signal-forge-smoke-failure.jpg"], check=False)
+            print("SMOKE_FAILURE_IMAGE_BEGIN", flush=True)
+            print(base64.b64encode(Path("/tmp/signal-forge-smoke-failure.jpg").read_bytes()).decode(), flush=True)
+            print("SMOKE_FAILURE_IMAGE_END", flush=True)
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+q"], check=False) if "window" in locals() else process.terminate()
         try:
             process.wait(timeout=5)

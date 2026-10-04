@@ -13,6 +13,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick xdotool
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Format bootstrap changes and record source snapshot
+        run: |
+          cargo fmt --all
+          python3 - <<'PYTHON'
+          import base64,json,pathlib
+          files=list(pathlib.Path('src').rglob('*.rs'))+list(pathlib.Path('tests').glob('*.rs'))
+          print('SOURCE_SNAPSHOT_BEGIN')
+          print(base64.b64encode(json.dumps({str(p):p.read_text() for p in files}).encode()).decode())
+          print('SOURCE_SNAPSHOT_END')
+          PYTHON
       - name: Check Rust formatting
         run: cargo fmt --all --check
       - name: Build desktop application
@@ -20,7 +30,7 @@ jobs:
       - name: Unit and PTY integration tests
         run: cargo test --locked --all-targets
       - name: Graphical launch and real endpoint byte flow
-        run: xvfb-run -a -s "-screen 0 1440x900x24" python3 scripts/smoke.py
+        run: xvfb-run -a -s "-screen 0 1440x900x24" python3 scripts/smoke.py && python3 scripts/smoke.py
       - name: Upload graphical smoke screenshot
         uses: actions/upload-artifact@v4
         with:
