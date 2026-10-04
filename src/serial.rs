@@ -1,8 +1,8 @@
 use crate::{
     config::{FlowControl, Parity, SerialSettings},
     endpoint::{ConnectionState, Endpoint, EndpointError, EndpointId},
-    traffic::{Direction, TrafficBus},
     repeat::{RepeatHandle, RepeatJob, RepeatSpec},
+    traffic::{Direction, TrafficBus},
 };
 use std::{
     io::{Read, Write},
@@ -89,41 +89,78 @@ impl SerialEndpoint {
                     while !worker_stop.load(Ordering::Acquire) {
                         // Bound command processing so manual sends cannot starve RX or timers.
                         for _ in 0..8 {
-                            if worker_stop.load(Ordering::Acquire) { break; }
+                            if worker_stop.load(Ordering::Acquire) {
+                                break;
+                            }
                             match rx.try_recv() {
                                 Ok(Command::Send(bytes)) => {
-                                    if !write_payload(&mut *port, &bytes, &worker_stop, None, &bus, &worker_id)? { return Ok(()); }
+                                    if !write_payload(
+                                        &mut *port,
+                                        &bytes,
+                                        &worker_stop,
+                                        None,
+                                        &bus,
+                                        &worker_id,
+                                    )? {
+                                        return Ok(());
+                                    }
                                 }
                                 Ok(Command::Repeat(job)) => {
-                                    if job.is_active() { repeat = Some(job); }
+                                    if job.is_active() {
+                                        repeat = Some(job);
+                                    }
                                 }
                                 Err(TryRecvError::Empty) => break,
                                 Err(TryRecvError::Disconnected) => return Ok(()),
                             }
                         }
-                        if worker_stop.load(Ordering::Acquire) { break; }
+                        if worker_stop.load(Ordering::Acquire) {
+                            break;
+                        }
                         if let Some(job) = &mut repeat {
                             job.poll(Instant::now(), |bytes, cancelled| {
-                                write_payload(&mut *port, bytes, &worker_stop, Some(cancelled), &bus, &worker_id)
+                                write_payload(
+                                    &mut *port,
+                                    bytes,
+                                    &worker_stop,
+                                    Some(cancelled),
+                                    &bus,
+                                    &worker_id,
+                                )
                             })?;
                         }
-                        if repeat.as_ref().is_some_and(|job| !job.is_active()) { repeat = None; }
+                        if repeat.as_ref().is_some_and(|job| !job.is_active()) {
+                            repeat = None;
+                        }
                         // Shorten RX waits to the next timer deadline. Serial reads remain
                         // bounded when a job is stopped, even for very long intervals.
-                        let timeout = repeat.as_ref().map(|job| job.time_until_next(Instant::now()))
+                        let timeout = repeat
+                            .as_ref()
+                            .map(|job| job.time_until_next(Instant::now()))
                             .unwrap_or(Duration::from_millis(20))
                             .clamp(Duration::from_millis(1), Duration::from_millis(20));
-                        port.set_timeout(timeout).map_err(|e| EndpointError::Io(e.to_string()))?;
+                        port.set_timeout(timeout)
+                            .map_err(|e| EndpointError::Io(e.to_string()))?;
                         match port.read(&mut buffer) {
                             Ok(0) => return Err(EndpointError::Io("serial device closed".into())),
-                            Ok(count) => bus.publish(worker_id.clone(), Direction::Rx, &buffer[..count]),
-                            Err(e) if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted) => {},
+                            Ok(count) => {
+                                bus.publish(worker_id.clone(), Direction::Rx, &buffer[..count])
+                            }
+                            Err(e)
+                                if matches!(
+                                    e.kind(),
+                                    std::io::ErrorKind::TimedOut
+                                        | std::io::ErrorKind::WouldBlock
+                                        | std::io::ErrorKind::Interrupted
+                                ) => {}
                             Err(e) => return Err(EndpointError::Io(e.to_string())),
                         }
                     }
                     Ok(())
                 })();
-                if let (Some(job), Err(error)) = (&repeat, &result) { job.fail(&error.to_string()); }
+                if let (Some(job), Err(error)) = (&repeat, &result) {
+                    job.fail(&error.to_string());
+                }
                 // Active and still-queued repeat commands cancel when their owners drop.
                 drop(repeat);
                 let next = match result {
@@ -171,15 +208,21 @@ impl Endpoint for SerialEndpoint {
             TrySendError::Disconnected(_) => EndpointError::Disconnected,
         })
     }
-    fn start_repeat(&self, bytes: Vec<u8>, spec: RepeatSpec) -> Result<RepeatHandle, EndpointError> {
+    fn start_repeat(
+        &self,
+        bytes: Vec<u8>,
+        spec: RepeatSpec,
+    ) -> Result<RepeatHandle, EndpointError> {
         if self.state() != ConnectionState::Connected || self.stop.load(Ordering::Acquire) {
             return Err(EndpointError::Disconnected);
         }
         let (job, handle) = RepeatJob::new(bytes, spec)?;
-        self.tx.try_send(Command::Repeat(job)).map_err(|e| match e {
-            TrySendError::Full(_) => EndpointError::QueueFull,
-            TrySendError::Disconnected(_) => EndpointError::Disconnected,
-        })?;
+        self.tx
+            .try_send(Command::Repeat(job))
+            .map_err(|e| match e {
+                TrySendError::Full(_) => EndpointError::QueueFull,
+                TrySendError::Disconnected(_) => EndpointError::Disconnected,
+            })?;
         Ok(handle)
     }
     fn disconnect(&mut self) {
@@ -208,7 +251,9 @@ fn write_payload(
 ) -> Result<bool, EndpointError> {
     let mut offset = 0;
     while offset < bytes.len() {
-        if stop.load(Ordering::Acquire) || cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        if stop.load(Ordering::Acquire)
+            || cancelled.is_some_and(|flag| flag.load(Ordering::Acquire))
+        {
             return Ok(false);
         }
         match port.write(&bytes[offset..]) {

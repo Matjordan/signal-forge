@@ -18,7 +18,7 @@ jobs:
           cargo fmt --all
           python3 - <<'PYTHON'
           import base64, json, pathlib
-          files = list(pathlib.Path('src').glob('*.rs')) + list(pathlib.Path('tests').glob('*.rs'))
+          files = list(pathlib.Path('src').rglob('*.rs')) + list(pathlib.Path('tests').glob('*.rs'))
           print('SOURCE_SNAPSHOT_BEGIN')
           print(base64.b64encode(json.dumps({str(path): path.read_text() for path in files}).encode()).decode())
           print('SOURCE_SNAPSHOT_END')

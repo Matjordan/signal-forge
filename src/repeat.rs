@@ -10,6 +10,18 @@ pub struct RepeatSpec {
     pub count: Option<u64>,
 }
 
+impl RepeatSpec {
+    pub fn validate(&self) -> Result<(), EndpointError> {
+        if self.interval < Duration::from_millis(1) || self.interval > Duration::from_secs(86400) {
+            return Err(EndpointError::Io("Repeat interval must be between 1 ms and 24 hours".into()));
+        }
+        if self.count == Some(0) {
+            return Err(EndpointError::Io("Repeat count must be positive, or continuous".into()));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RepeatState {
     Pending,
@@ -64,12 +76,7 @@ impl RepeatJob {
         if payload.is_empty() || payload.len() > 65536 {
             return Err(EndpointError::Io("Repeat payload must contain 1–65536 bytes".into()));
         }
-        if spec.interval < Duration::from_millis(1) || spec.interval > Duration::from_secs(86400) {
-            return Err(EndpointError::Io("Repeat interval must be between 1 ms and 24 hours".into()));
-        }
-        if spec.count == Some(0) {
-            return Err(EndpointError::Io("Repeat count must be positive, or continuous".into()));
-        }
+        spec.validate()?;
         let handle = RepeatHandle(Arc::new(Shared {
             cancelled: AtomicBool::new(false),
             status: Mutex::new(RepeatStatus { state: RepeatState::Pending, sent: 0, count: spec.count }),

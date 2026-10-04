@@ -1,6 +1,6 @@
 # Signal Forge
 
-A Linux serial-port workbench implemented in Rust with egui/eframe. The initial implementation provides independently configured serial connections, dockable terminals, validated text/hex sending, and independent repeated sends.
+A Linux serial-port workbench implemented in Rust with egui/eframe. The initial implementation provides independently configured serial connections, dockable terminals, validated text/hex sending, independent repeated sends, and saved preset profiles.
 
 ## Current implementation
 
@@ -43,12 +43,21 @@ The executable is `target/release/signal-forge`. To explicitly open devices at l
 
 Each terminal retains up to 2,000 rows. RX and TX have distinct labels and colors. Binary bytes are rendered with escapes in text mode. A bounded monitoring queue reports dropped events in the status bar. Monitoring is best-effort, not a lossless capture mechanism.
 
+## Preset profiles
+
+The right sidebar contains the active profile and its reusable commands. Choose the preset target terminal (clicking a terminal pane also selects it), then click a preset name to send. **New preset** opens an editor for name, payload, encoding, escapes, line ending, selected/fixed endpoint target, description, shortcut, and optional repeat settings. **Edit**, **Delete**, **Up**, and **Down** update the profile immediately. A repeating preset refuses to replace a running repeat; stop that job first.
+
+Create named device/project profiles with **Create profile**. Changes are validated and saved separately from workspace settings in `signal-forge/presets.json` under the configuration directory. Presets never send merely because a profile is loaded or imported. Invalid or unsupported files are preserved and reported rather than silently replaced.
+
+Use **Export profile** and **Import profile** with a JSON file path. The human-readable format is `{ "version": 1, "profile": { "name": "Bench", "presets": [...] } }`; it preserves all send and repeat settings. Import replaces a profile with the same name and rejects invalid payloads, schedules, or conflicting shortcuts before modifying the library. Shortcuts are **Ctrl+1** through **Ctrl+9**, scoped to the active profile and suppressed while editing text or a preset.
+
 ## Architecture
 
 - `endpoint`: stable IDs, connection states, errors, transport-independent asynchronous TX interface.
 - `traffic`: timestamped raw-byte RX/TX events, shared payloads, ordered nonblocking fan-out.
 - `serial`: device discovery and a worker per open port; all physical I/O is outside widgets.
 - `send`: pure, all-or-nothing escape/hex encoding and explicit line endings.
+- `presets`: validated command/profile models, atomic persistence, and versioned JSON import/export.
 - `repeat`: transport-independent scheduling, finite counts, progress, and cancellation tokens; serial workers drive timers independently of GUI repainting.
 - `config`: versioned serial-setting persistence with explicit save and atomic file replacement.
 - `app`: device controls, dock layout, bounded/virtualized terminal views, and send controls.
@@ -57,9 +66,9 @@ A slow subscriber loses monitoring events instead of blocking a serial worker. S
 
 ## Issue progress
 
-The merged initial implementation provides the foundation (#1), event model (#2), serial management (#3), dockable terminals (#4), and manual send engine (#5). Repeated sending (#6) is implemented in the next pass. Linux build, formatting, unit/PTY tests, and graphical launch with two PTYs pass in CI. Physical-device and interactive docking validation remain outstanding before closing these issues. PTY tests cover real byte flow, independent endpoints, and disconnect/reopen behavior, providing the first part of #12.
+The merged initial implementation provides the foundation (#1), event model (#2), serial management (#3), dockable terminals (#4), and manual send engine (#5). Repeated sending (#6) and preset profiles (#7) are implemented in the next pass. Linux build, formatting, unit/PTY tests, and graphical launch with two PTYs pass in CI. Physical-device and interactive docking validation remain outstanding before closing these issues. PTY tests cover real byte flow, independent endpoints, and disconnect/reopen behavior, providing the first part of #12.
 
-Next in issue order: preset profiles (#7), owned PTY pairs (#8), full-duplex bridging (#9), inspector/capture (#10), full workspace persistence (#11), expanded integration tests (#12), and packaging/usability (#13). Only port settings are persisted today; dock layout and profiles are not yet saved.
+Next in issue order: owned PTY pairs (#8), full-duplex bridging (#9), inspector/capture (#10), full workspace persistence (#11), expanded integration tests (#12), and packaging/usability (#13). Port settings and preset profiles are persisted today; dock layout and display preferences are not yet saved. Profiles are stored separately.
 
 ## Manual smoke checklist
 
@@ -71,6 +80,7 @@ Next in issue order: preset profiles (#7), owned PTY pairs (#8), full-duplex bri
 - Disconnect/close a repeating port and confirm the peer receives no further payloads.
 - Verify RX/TX labels, hex/text modes, timestamps, pause, clear, and auto-scroll.
 - Unplug a device, confirm an endpoint error, close its tab, then reconnect.
+- Create/edit/reorder/delete presets, export/import a profile, and verify one-click and keyboard sends to the selected terminal.
 - Save settings and restart; confirm no device opens or sends automatically.
 
 CI builds every target and runs unit and Linux PTY integration tests without physical hardware. The initial Linux CI build and unit/PTY tests passed. Local builds are unavailable in the implementation environment, which lacks Rust and has an unavailable network proxy. CI also starts the app under Xvfb with two real PTY endpoints; physical-device and interactive docking smoke validation remain manual.
