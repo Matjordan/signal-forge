@@ -85,25 +85,42 @@ impl Terminal {
         self.error = match send::encode(&self.input, self.encoding, self.escapes, self.ending) {
             Ok(bytes) if bytes.is_empty() => Some("Enter a payload or choose a line ending".into()),
             Ok(bytes) => match self.endpoint.send(bytes) {
-                Ok(()) => { self.remember_input(); None }
+                Ok(()) => {
+                    self.remember_input();
+                    None
+                }
                 Err(error) => Some(error.to_string()),
             },
             Err(e) => Some(e.to_string()),
         };
     }
     fn input_entry(&self) -> SendEntry {
-        SendEntry { input: self.input.clone(), encoding: self.encoding, escapes: self.escapes, ending: self.ending }
+        SendEntry {
+            input: self.input.clone(),
+            encoding: self.encoding,
+            escapes: self.escapes,
+            ending: self.ending,
+        }
     }
-    fn remember_input(&mut self) { self.send_history.remember(self.input_entry()); }
+    fn remember_input(&mut self) {
+        self.send_history.remember(self.input_entry());
+    }
     fn restore_input(&mut self, entry: SendEntry) {
-        self.input = entry.input; self.encoding = entry.encoding; self.escapes = entry.escapes; self.ending = entry.ending;
+        self.input = entry.input;
+        self.encoding = entry.encoding;
+        self.escapes = entry.escapes;
+        self.ending = entry.ending;
         self.error = None;
     }
     fn history_older(&mut self) {
-        if let Some(entry) = self.send_history.older(self.input_entry()) { self.restore_input(entry); }
+        if let Some(entry) = self.send_history.older(self.input_entry()) {
+            self.restore_input(entry);
+        }
     }
     fn history_newer(&mut self) {
-        if let Some(entry) = self.send_history.newer() { self.restore_input(entry); }
+        if let Some(entry) = self.send_history.newer() {
+            self.restore_input(entry);
+        }
     }
     fn start_repeat(&mut self) {
         self.error = match send::encode(&self.input, self.encoding, self.escapes, self.ending) {
@@ -366,10 +383,14 @@ impl TabViewer for TerminalViewer<'_> {
             // Consume these keys before TextEdit: Enter otherwise surrenders focus,
             // and arrows would move the caret instead of recalling a command.
             let (enter, older, newer) = ui.input_mut(|input| {
-                if !focused { return (false, false, false); }
-                (input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
-                 input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
-                 input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown))
+                if !focused {
+                    return (false, false, false);
+                }
+                (
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                )
             });
             let input = ui.add(
                 egui::TextEdit::singleline(&mut tab.input)
@@ -379,17 +400,27 @@ impl TabViewer for TerminalViewer<'_> {
             );
             // Process text events before recall so a draft includes every character
             // entered in this frame. The navigation key itself was consumed above.
-            if input.changed() { tab.send_history.edited(); }
+            if input.changed() {
+                tab.send_history.edited();
+            }
             let focused = input.has_focus();
-            if older && focused { tab.history_older(); }
-            if newer && focused { tab.history_newer(); }
-            let clicked = ui.add_enabled(
-                tab.endpoint.state() == ConnectionState::Connected,
-                egui::Button::new("Send").fill(Color32::from_rgb(21, 99, 218)),
-            ).clicked();
+            if older && focused {
+                tab.history_older();
+            }
+            if newer && focused {
+                tab.history_newer();
+            }
+            let clicked = ui
+                .add_enabled(
+                    tab.endpoint.state() == ConnectionState::Connected,
+                    egui::Button::new("Send").fill(Color32::from_rgb(21, 99, 218)),
+                )
+                .clicked();
             if clicked || (enter && focused) {
                 tab.send();
-                if enter && focused { input.request_focus(); }
+                if enter && focused {
+                    input.request_focus();
+                }
             }
         });
         ui.horizontal_wrapped(|ui| {
