@@ -65,6 +65,7 @@ impl Workbench {
                 tab.encoding = preset.encoding;
                 tab.escapes = preset.escapes;
                 tab.ending = preset.ending;
+                tab.remember_input();
             }
             self.error = result
                 .err()

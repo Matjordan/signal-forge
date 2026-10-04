@@ -9,6 +9,7 @@ use signal_forge::{
     presets::{Preset, PresetLibrary},
     repeat::{RepeatHandle, RepeatSpec},
     send::{self, Encoding, LineEnding},
+    send_history::{SendEntry, SendHistory},
     serial::{self, SerialEndpoint},
     traffic::{self, Direction, TrafficBus, TrafficEvent},
 };
@@ -31,6 +32,7 @@ struct Terminal {
     timestamps: bool,
     hex: bool,
     input: String,
+    send_history: SendHistory,
     encoding: Encoding,
     escapes: bool,
     ending: LineEnding,
@@ -53,6 +55,7 @@ impl Terminal {
             timestamps: true,
             hex: false,
             input: String::new(),
+            send_history: SendHistory::default(),
             encoding: Encoding::Text,
             escapes: true,
             ending: LineEnding::None,
@@ -81,9 +84,43 @@ impl Terminal {
     fn send(&mut self) {
         self.error = match send::encode(&self.input, self.encoding, self.escapes, self.ending) {
             Ok(bytes) if bytes.is_empty() => Some("Enter a payload or choose a line ending".into()),
-            Ok(bytes) => self.endpoint.send(bytes).err().map(|e| e.to_string()),
+            Ok(bytes) => match self.endpoint.send(bytes) {
+                Ok(()) => {
+                    self.remember_input();
+                    None
+                }
+                Err(error) => Some(error.to_string()),
+            },
             Err(e) => Some(e.to_string()),
         };
+    }
+    fn input_entry(&self) -> SendEntry {
+        SendEntry {
+            input: self.input.clone(),
+            encoding: self.encoding,
+            escapes: self.escapes,
+            ending: self.ending,
+        }
+    }
+    fn remember_input(&mut self) {
+        self.send_history.remember(self.input_entry());
+    }
+    fn restore_input(&mut self, entry: SendEntry) {
+        self.input = entry.input;
+        self.encoding = entry.encoding;
+        self.escapes = entry.escapes;
+        self.ending = entry.ending;
+        self.error = None;
+    }
+    fn history_older(&mut self) {
+        if let Some(entry) = self.send_history.older(self.input_entry()) {
+            self.restore_input(entry);
+        }
+    }
+    fn history_newer(&mut self) {
+        if let Some(entry) = self.send_history.newer() {
+            self.restore_input(entry);
+        }
     }
     fn start_repeat(&mut self) {
         self.error = match send::encode(&self.input, self.encoding, self.escapes, self.ending) {
@@ -99,6 +136,7 @@ impl Terminal {
                 match self.endpoint.start_repeat(bytes, spec) {
                     Ok(handle) => {
                         self.repeat = Some(handle);
+                        self.remember_input();
                         None
                     }
                     Err(error) => Some(error.to_string()),
@@ -338,20 +376,47 @@ impl TabViewer for TerminalViewer<'_> {
                         ui.selectable_value(&mut tab.ending, value, label);
                     }
                 });
+            // A global endpoint-based ID stays stable as virtualized traffic rows
+            // are added above this editor or its terminal is moved in the dock.
+            let input_id = egui::Id::new(("terminal-payload", tab.endpoint.id().0.clone()));
+            let focused = ui.memory(|memory| memory.has_focus(input_id));
+            // Consume these keys before TextEdit: Enter otherwise surrenders focus,
+            // and arrows would move the caret instead of recalling a command.
+            let (enter, older, newer) = ui.input_mut(|input| {
+                if !focused {
+                    return (false, false, false);
+                }
+                (
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                )
+            });
             let input = ui.add(
                 egui::TextEdit::singleline(&mut tab.input)
+                    .id(input_id)
                     .desired_width((ui.available_width() - 70.0).max(100.0))
-                    .hint_text("Payload, e.g. AT\\r\\n"),
+                    .hint_text("Payload · Enter sends · Up recalls"),
             );
-            let enter = input.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if ui
+            // Process text events before recall so a draft includes every character
+            // entered in this frame. The navigation key itself was consumed above.
+            if input.changed() {
+                tab.send_history.edited();
+            }
+            let focused = input.has_focus();
+            if older && focused {
+                tab.history_older();
+            }
+            if newer && focused {
+                tab.history_newer();
+            }
+            let clicked = ui
                 .add_enabled(
                     tab.endpoint.state() == ConnectionState::Connected,
                     egui::Button::new("Send").fill(Color32::from_rgb(21, 99, 218)),
                 )
-                .clicked()
-                || enter
-            {
+                .clicked();
+            if clicked || (enter && focused) {
                 tab.send();
             }
         });
@@ -416,7 +481,7 @@ impl TabViewer for TerminalViewer<'_> {
             ui.colored_label(Color32::LIGHT_RED, error);
         }
         ui.small(
-            "Enter sends to this tab. Closing the tab disconnects its device. Timestamps are UTC.",
+            "Enter sends · Up cycles previous messages · Down returns to draft · History is per terminal.",
         );
     }
     fn on_close(&mut self, tab: &mut Terminal) -> bool {
