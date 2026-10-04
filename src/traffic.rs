@@ -1,8 +1,8 @@
 use crate::endpoint::EndpointId;
 use std::sync::{
+    atomic::{AtomicU64, Ordering},
     mpsc::{self, Receiver, SyncSender, TrySendError},
     Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
 };
 use std::time::SystemTime;
 
@@ -49,8 +49,18 @@ impl TrafficBus {
         let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
         inner.next_subscriber += 1;
         let id = inner.next_subscriber;
-        inner.subscribers.push(Subscriber { sender, dropped: dropped.clone(), id });
-        TrafficSubscription { receiver, dropped, id, capacity: capacity.max(1), bus: self.clone() }
+        inner.subscribers.push(Subscriber {
+            sender,
+            dropped: dropped.clone(),
+            id,
+        });
+        TrafficSubscription {
+            receiver,
+            dropped,
+            id,
+            capacity: capacity.max(1),
+            bus: self.clone(),
+        }
     }
 
     pub fn publish(&self, endpoint: EndpointId, direction: Direction, bytes: &[u8]) {
@@ -99,9 +109,16 @@ pub struct TrafficSubscription {
     bus: TrafficBus,
 }
 impl TrafficSubscription {
-    pub fn dropped_events(&self) -> u64 { self.dropped.load(Ordering::Relaxed) }
+    pub fn dropped_events(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
     pub fn close(&self) {
-        self.bus.0.lock().unwrap_or_else(|e| e.into_inner()).subscribers.retain(|s| s.id != self.id);
+        self.bus
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .subscribers
+            .retain(|s| s.id != self.id);
     }
 }
 

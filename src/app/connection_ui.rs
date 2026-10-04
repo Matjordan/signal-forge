@@ -1,7 +1,10 @@
 use super::*;
 use signal_forge::{bridge::Bridge, virtual_pair::VirtualPair};
+use signal_forge::{
+    capture::{Capture, CaptureState},
+    inspector::{timestamp_utc, DirectionFilter, Inspector},
+};
 use std::path::Path;
-use signal_forge::{capture::{Capture, CaptureState}, inspector::{Inspector, DirectionFilter, timestamp_utc}};
 
 pub(super) struct BridgeView {
     bridge: Bridge,
@@ -56,7 +59,10 @@ impl Workbench {
                     bridge,
                     events,
                     inspector: Inspector::new(),
-                    capture_path: format!("bridge-{}.jsonl", signal_forge::inspector::timestamp_ns(std::time::SystemTime::now())),
+                    capture_path: format!(
+                        "bridge-{}.jsonl",
+                        signal_forge::inspector::timestamp_ns(std::time::SystemTime::now())
+                    ),
                     capture: None,
                     capture_error: None,
                 });
@@ -80,7 +86,9 @@ impl Workbench {
             self.start_bridge();
         }
         if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::R)) {
-            if let Some(view) = self.bridges.first_mut() { view.toggle_capture(); }
+            if let Some(view) = self.bridges.first_mut() {
+                view.toggle_capture();
+            }
         }
         if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::M)) {
             for view in &mut self.bridges {
@@ -181,7 +189,9 @@ impl Workbench {
         ui.small("RX on A → TX on B; RX on B → TX on A.");
     }
     pub(super) fn bridge_monitors(&mut self, ctx: &egui::Context) {
-        if self.bridges.is_empty() { return; }
+        if self.bridges.is_empty() {
+            return;
+        }
         let mut remove = None;
         egui::TopBottomPanel::bottom("bridge-monitors").resizable(true).min_height(170.0).default_height(280.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -237,9 +247,10 @@ impl Workbench {
                 }
             });
         });
-        if let Some(index) = remove { self.bridges.remove(index); }
+        if let Some(index) = remove {
+            self.bridges.remove(index);
+        }
     }
-
 }
 impl Drop for Workbench {
     fn drop(&mut self) {
@@ -254,10 +265,20 @@ impl Drop for Workbench {
 impl BridgeView {
     fn toggle_capture(&mut self) {
         if let Some(capture) = &self.capture {
-            if matches!(capture.status().state, CaptureState::Recording | CaptureState::Finishing) { capture.request_stop(); return; }
+            if matches!(
+                capture.status().state,
+                CaptureState::Recording | CaptureState::Finishing
+            ) {
+                capture.request_stop();
+                return;
+            }
         }
         match Capture::start(Path::new(&self.capture_path), &self.bridge) {
-            Ok(capture) => { log::info!("Capture started: {}", capture.path.display()); self.capture = Some(capture); self.capture_error = None; }
+            Ok(capture) => {
+                log::info!("Capture started: {}", capture.path.display());
+                self.capture = Some(capture);
+                self.capture_error = None;
+            }
             Err(error) => self.capture_error = Some(error),
         }
     }
@@ -265,6 +286,8 @@ impl BridgeView {
 impl Drop for BridgeView {
     fn drop(&mut self) {
         self.bridge.stop();
-        if let Some(capture) = &mut self.capture { capture.finish(); }
+        if let Some(capture) = &mut self.capture {
+            capture.finish();
+        }
     }
 }

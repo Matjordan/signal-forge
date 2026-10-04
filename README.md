@@ -61,6 +61,14 @@ Open two terminals, choose endpoints **A** and **B**, then click **Start full-du
 
 The lower bridge monitor labels each direction **A → B** or **B → A**. **Pause display** (or **Ctrl+Shift+M** for all bridge monitors) discards new display rows while forwarding continues. **Stop / remove** leaves both endpoints open. Disconnecting either endpoint faults the bridge; restoring a connection requires starting a new bridge explicitly. Bounded monitor queues can drop display events without affecting forwarded bytes. Transport write failures fault the bridge; already accepted bytes cannot be recalled.
 
+## Bridge traffic inspector and captures
+
+The bridge panel shows full UTC timestamps, direction, ASCII escapes, and raw hex together. **Delta times** adds the time since the previous observed chunk; it uses the complete chronological stream even when direction filters hide rows. Choose **Both directions**, **A → B**, or **B → A** without discarding the other direction's retained history. Sequence gaps are marked explicitly. The inspector retains at most 1,000 chunks per bridge and renders only visible rows; **Auto-scroll**, **Clear display**, and **Pause display** control presentation.
+
+Enter a writable **Capture file** path and click **Start capture**. **Ctrl+Shift+R** starts/stops recording on the first bridge. Recording always includes both directions, independently of display filters, clear, and pause. A dedicated worker streams raw bytes and metadata directly to disk through its own bounded queue. Existing files are never overwritten; choose a new filename to start another capture. **Stop capture** changes the state to **Finishing**, then **Completed** after queued events and the end summary are saved. Endpoint faults, removing a bridge, and normal shutdown also finish recording.
+
+Captures use [versioned JSON Lines](./docs/capture-format.md), with raw byte arrays, exact Unix nanosecond timestamps, signed deltas, source IDs, and direction. The footer records the capture's own dropped-event count; overloaded captures report incomplete data while forwarding continues. UI history limits do not limit file length. Files without a footer were interrupted or encountered a write failure.
+
 ## Architecture
 
 - `endpoint`: stable IDs, connection states, errors, transport-independent asynchronous TX interface.
@@ -71,6 +79,8 @@ The lower bridge monitor labels each direction **A → B** or **B → A**. **Pau
 - `repeat`: transport-independent scheduling, finite counts, progress, and cancellation tokens; serial workers drive timers independently of GUI repainting.
 - `virtual_pair`: owned raw Linux PTYs, optional named links, and a bounded full-duplex relay.
 - `bridge`: transport-neutral RX routes, serialized destination writes, lifecycle control, and independent directional monitoring.
+- `inspector`: bounded display history, UTC timestamp formatting, chronological deltas, and direction filters.
+- `capture`: streaming JSON Lines writer, independent bounded subscriptions, integrity summaries, and controlled shutdown.
 - `config`: versioned serial-setting persistence with explicit save and atomic file replacement.
 - `app`: device controls, dock layout, bounded/virtualized terminal views, and send controls.
 
@@ -78,9 +88,9 @@ A slow subscriber loses monitoring events instead of blocking a serial worker. S
 
 ## Issue progress
 
-The foundation (#1–#5), repeated sending (#6), and preset profiles (#7) are merged. Owned PTY pairs (#8) and full-duplex bridging (#9) are implemented in the current pass. Serial-device (#3) and interactive docking (#4) checks remain open for manual validation with physical hardware.
+The foundation (#1–#5), repeated sending (#6), and preset profiles (#7) are merged. Owned PTY pairs (#8) and full-duplex bridging (#9) are merged; bridge inspection and capture export (#10) are implemented in the current pass. Serial-device (#3) and interactive docking (#4) checks remain open for manual validation with physical hardware.
 
-Next in issue order: inspector/capture (#10), full workspace persistence (#11), expanded integration tests (#12), and packaging/usability (#13). Port settings and preset profiles are persisted today; dock layout, virtual-pair definitions, bridges, and display preferences are not yet saved.
+Next in issue order: full workspace persistence (#11), expanded integration tests (#12), and packaging/usability (#13). Port settings and preset profiles are persisted today; dock layout, virtual-pair definitions, bridges, and display preferences are not yet saved.
 
 ## Manual smoke checklist
 
@@ -95,6 +105,7 @@ Next in issue order: inspector/capture (#10), full workspace persistence (#11), 
 - Create/edit/reorder/delete presets, export/import a profile, and verify one-click and keyboard sends to the selected terminal.
 - Create several virtual pairs, copy/open their paths in another program, exchange bytes both ways, then remove them and verify cleanup.
 - Bridge two serial devices or a serial device and a virtual pair; exchange binary data both ways, pause the bridge monitor, and verify forwarding continues.
+- Record a bridge capture while pausing/filtering the inspector; verify raw bytes and directions in JSONL and a complete footer after stopping.
 - Disconnect either bridged endpoint and verify the bridge faults without restarting automatically.
 - Save settings and restart; confirm no device opens or sends automatically.
 

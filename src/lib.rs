@@ -9,5 +9,5 @@ pub mod serial;
 pub mod traffic;
 pub mod virtual_pair;
 
-pub mod inspector;
 pub mod capture;
+pub mod inspector;

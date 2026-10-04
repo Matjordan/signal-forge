@@ -93,6 +93,7 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
         os.write(pairs[1][0], b"bridge B -> A\r\n")
         read_bytes(pairs[1][0], b"bridge A -> B\x00\xff")
         read_bytes(pairs[0][0], b"bridge B -> A\r\n")
+        time.sleep(0.2)  # Let the live inspector display these chunks before pausing.
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+m"], check=True)
         time.sleep(0.1)
         os.write(pairs[0][0], b"forward while display paused")

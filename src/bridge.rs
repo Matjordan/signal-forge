@@ -163,7 +163,9 @@ impl Bridge {
             shared,
         })
     }
-    pub fn subscribe_tracked(&self, capacity: usize) -> crate::traffic::TrafficSubscription { self.shared.monitor.subscribe_tracked(capacity) }
+    pub fn subscribe_tracked(&self, capacity: usize) -> crate::traffic::TrafficSubscription {
+        self.shared.monitor.subscribe_tracked(capacity)
+    }
     pub fn subscribe(&self, capacity: usize) -> Receiver<Arc<TrafficEvent>> {
         self.shared.monitor.subscribe(capacity)
     }
