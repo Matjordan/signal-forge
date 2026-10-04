@@ -92,6 +92,8 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         quit_app(process, window)
         print('Workspace save/restart, disconnected restore, no automatic TX, corrupt-file preservation and backup recovery passed.', flush=True)
     except Exception:
+        log.flush()
+        print((Path(directory) / 'app.log').read_text(), flush=True)
         subprocess.run(['import', '-window', 'root', '/tmp/workspace-failure.png'], check=False)
         subprocess.run(['convert', '/tmp/workspace-failure.png', '-resize', '1280x', '-quality', '80', '/tmp/workspace-failure.jpg'], check=False)
         raise
