@@ -11,3 +11,5 @@ pub mod virtual_pair;
 
 pub mod capture;
 pub mod inspector;
+
+pub mod send_history;

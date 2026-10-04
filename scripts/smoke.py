@@ -57,6 +57,59 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+2"], check=True)
         read_bytes(pairs[0][0], bytes([0, 255]) * 3)
         assert not select.select([master for master, _ in pairs], [], [], 0.15)[0]
+        def key(keys):
+            subprocess.run(["xdotool", "key", "--window", window, keys], check=True)
+            time.sleep(0.06)
+
+        def payload(x, text):
+            # Fixed 1440x900 smoke viewport, before a bridge panel is opened.
+            subprocess.run(["xdotool", "mousemove", "--window", window, str(x), "713", "click", "1"], check=True)
+            key("ctrl+a")
+            subprocess.run(["xdotool", "type", "--window", window, "--clearmodifiers", "--delay", "5", text], check=True)
+
+        payload(950, r"alpha\r\n")
+        key("Return")
+        read_bytes(pairs[1][0], b"alpha\r\n")
+        # Enter keeps focus, so another press sends exactly once again.
+        key("Return")
+        read_bytes(pairs[1][0], b"alpha\r\n")
+        key("ctrl+a")
+        subprocess.run(["xdotool", "type", "--window", window, "beta"], check=True)
+        key("Return")
+        read_bytes(pairs[1][0], b"beta")
+        payload(950, "unsent draft")
+        key("Up")  # beta
+        key("Up")  # alpha
+        key("Down")  # beta
+        key("Down")  # restore unsent draft
+        key("Return")
+        read_bytes(pairs[1][0], b"unsent draft")
+        key("Up")  # unsent draft
+        key("Up")  # beta
+        key("Up")  # alpha
+        key("Return")
+        read_bytes(pairs[1][0], b"alpha\r\n")
+        payload(950, r"invalid\q")
+        key("Return")
+        assert not select.select([master for master, _ in pairs], [], [], 0.1)[0]
+        key("Up")  # alpha; rejected input was not added
+        key("Up")  # unsent draft
+        key("Return")
+        read_bytes(pairs[1][0], b"unsent draft")
+        # The other terminal has independent hex history, including its preset.
+        payload(480, "AA BB")
+        key("Return")
+        read_bytes(pairs[0][0], bytes([170, 187]))
+        key("Up")  # AA BB
+        key("Up")  # 00 FF, recalled from the earlier binary preset
+        key("Return")
+        read_bytes(pairs[0][0], bytes([0, 255]))
+        assert not select.select([master for master, _ in pairs], [], [], 0.1)[0]
+        # Leave the editor; Return and Up elsewhere cannot send a payload.
+        subprocess.run(["xdotool", "mousemove", "--window", window, "950", "200", "click", "1"], check=True)
+        key("Return")
+        key("Up")
+        assert not select.select([master for master, _ in pairs], [], [], 0.1)[0]
         # Create an owned pair through the same action as the UI button.
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+n"], check=True)
         deadline = time.monotonic() + 3
@@ -122,7 +175,7 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
         time.sleep(0.2)
         subprocess.run(["import", "-window", "root", "/tmp/signal-forge-smoke.png"], check=True)
         subprocess.run(["convert", "/tmp/signal-forge-smoke.png", "-resize", "1280x", "-quality", "80", "/tmp/signal-forge-smoke.jpg"], check=True)
-        print("Graphical launch, selected/fixed preset targets, binary repeat, owned PTY creation, duplex bridging, paused monitoring, JSONL capture export, and no-auto-send checks passed.", flush=True)
+        print("Graphical launch, selected/fixed preset targets, binary repeat, owned PTY creation, duplex bridging, paused monitoring, JSONL capture export, Enter sends, per-terminal Up/Down recall, and no-auto-send checks passed.", flush=True)
         if os.environ.get("SIGNAL_FORGE_REVIEW_IMAGE") == "1":
             print("SMOKE_IMAGE_BEGIN", flush=True)
             print(base64.b64encode(Path("/tmp/signal-forge-smoke.jpg").read_bytes()).decode(), flush=True)
