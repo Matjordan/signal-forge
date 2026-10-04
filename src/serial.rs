@@ -1,6 +1,7 @@
 use crate::{
     config::{FlowControl, Parity, SerialSettings},
     endpoint::{ConnectionState, Endpoint, EndpointError, EndpointId},
+    repeat::{RepeatHandle, RepeatJob, RepeatSpec},
     traffic::{Direction, TrafficBus},
 };
 use std::{
@@ -11,7 +12,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub fn discover() -> Result<Vec<String>, EndpointError> {
@@ -24,11 +25,16 @@ pub fn discover() -> Result<Vec<String>, EndpointError> {
     Ok(ports)
 }
 
+enum Command {
+    Send(Vec<u8>),
+    Repeat(RepeatJob),
+}
+
 pub struct SerialEndpoint {
     id: EndpointId,
     name: String,
     state: Arc<Mutex<ConnectionState>>,
-    tx: SyncSender<Vec<u8>>,
+    tx: SyncSender<Command>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -70,7 +76,7 @@ impl SerialEndpoint {
         let id = EndpointId(format!("serial:{}", settings.path));
         let state = Arc::new(Mutex::new(ConnectionState::Connected));
         let stop = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(64);
+        let (tx, rx) = mpsc::sync_channel::<Command>(64);
         let worker_state = state.clone();
         let worker_stop = stop.clone();
         let worker_id = id.clone();
@@ -78,43 +84,30 @@ impl SerialEndpoint {
             .name(format!("serial:{}", settings.path))
             .spawn(move || {
                 let mut buffer = [0; 4096];
-                let run = || -> Result<(), String> {
+                let mut repeat: Option<RepeatJob> = None;
+                let result = (|| -> Result<(), EndpointError> {
                     while !worker_stop.load(Ordering::Acquire) {
-                        // Limit TX per iteration so a busy sender cannot starve RX.
+                        // Bound command processing so manual sends cannot starve RX or timers.
                         for _ in 0..8 {
                             if worker_stop.load(Ordering::Acquire) {
                                 break;
                             }
                             match rx.try_recv() {
-                                Ok(bytes) => {
-                                    // Report only the bytes actually accepted, including
-                                    // a partial write before a device fails.
-                                    let mut offset = 0;
-                                    while offset < bytes.len() {
-                                        if worker_stop.load(Ordering::Acquire) {
-                                            return Ok(());
-                                        }
-                                        match port.write(&bytes[offset..]) {
-                                            Ok(0) => {
-                                                return Err(
-                                                    "serial write returned zero bytes".into()
-                                                )
-                                            }
-                                            Ok(count) => {
-                                                bus.publish(
-                                                    worker_id.clone(),
-                                                    Direction::Tx,
-                                                    &bytes[offset..offset + count],
-                                                );
-                                                offset += count;
-                                            }
-                                            Err(e)
-                                                if e.kind() == std::io::ErrorKind::Interrupted =>
-                                            {
-                                                continue
-                                            }
-                                            Err(e) => return Err(e.to_string()),
-                                        }
+                                Ok(Command::Send(bytes)) => {
+                                    if !write_payload(
+                                        &mut *port,
+                                        &bytes,
+                                        &worker_stop,
+                                        None,
+                                        &bus,
+                                        &worker_id,
+                                    )? {
+                                        return Ok(());
+                                    }
+                                }
+                                Ok(Command::Repeat(job)) => {
+                                    if job.is_active() {
+                                        repeat = Some(job);
                                     }
                                 }
                                 Err(TryRecvError::Empty) => break,
@@ -124,8 +117,32 @@ impl SerialEndpoint {
                         if worker_stop.load(Ordering::Acquire) {
                             break;
                         }
+                        if let Some(job) = &mut repeat {
+                            job.poll(Instant::now(), |bytes, cancelled| {
+                                write_payload(
+                                    &mut *port,
+                                    bytes,
+                                    &worker_stop,
+                                    Some(cancelled),
+                                    &bus,
+                                    &worker_id,
+                                )
+                            })?;
+                        }
+                        if repeat.as_ref().is_some_and(|job| !job.is_active()) {
+                            repeat = None;
+                        }
+                        // Shorten RX waits to the next timer deadline. Serial reads remain
+                        // bounded when a job is stopped, even for very long intervals.
+                        let timeout = repeat
+                            .as_ref()
+                            .map(|job| job.time_until_next(Instant::now()))
+                            .unwrap_or(Duration::from_millis(20))
+                            .clamp(Duration::from_millis(1), Duration::from_millis(20));
+                        port.set_timeout(timeout)
+                            .map_err(|e| EndpointError::Io(e.to_string()))?;
                         match port.read(&mut buffer) {
-                            Ok(0) => return Err("serial device closed".into()),
+                            Ok(0) => return Err(EndpointError::Io("serial device closed".into())),
                             Ok(count) => {
                                 bus.publish(worker_id.clone(), Direction::Rx, &buffer[..count])
                             }
@@ -136,20 +153,21 @@ impl SerialEndpoint {
                                         | std::io::ErrorKind::WouldBlock
                                         | std::io::ErrorKind::Interrupted
                                 ) => {}
-                            Err(e) => return Err(e.to_string()),
+                            Err(e) => return Err(EndpointError::Io(e.to_string())),
                         }
                     }
                     Ok(())
-                };
-                let result = {
-                    let mut run = run;
-                    run()
-                };
+                })();
+                if let (Some(job), Err(error)) = (&repeat, &result) {
+                    job.fail(&error.to_string());
+                }
+                // Active and still-queued repeat commands cancel when their owners drop.
+                drop(repeat);
                 let next = match result {
                     Ok(()) => ConnectionState::Disconnected,
                     Err(error) => {
                         log::error!("{}: {error}", worker_id.0);
-                        ConnectionState::Fault(error)
+                        ConnectionState::Fault(error.to_string())
                     }
                 };
                 *worker_state.lock().unwrap_or_else(|e| e.into_inner()) = next;
@@ -185,10 +203,27 @@ impl Endpoint for SerialEndpoint {
                 "A single message cannot exceed 64 KiB".into(),
             ));
         }
-        self.tx.try_send(bytes).map_err(|e| match e {
+        self.tx.try_send(Command::Send(bytes)).map_err(|e| match e {
             TrySendError::Full(_) => EndpointError::QueueFull,
             TrySendError::Disconnected(_) => EndpointError::Disconnected,
         })
+    }
+    fn start_repeat(
+        &self,
+        bytes: Vec<u8>,
+        spec: RepeatSpec,
+    ) -> Result<RepeatHandle, EndpointError> {
+        if self.state() != ConnectionState::Connected || self.stop.load(Ordering::Acquire) {
+            return Err(EndpointError::Disconnected);
+        }
+        let (job, handle) = RepeatJob::new(bytes, spec)?;
+        self.tx
+            .try_send(Command::Repeat(job))
+            .map_err(|e| match e {
+                TrySendError::Full(_) => EndpointError::QueueFull,
+                TrySendError::Disconnected(_) => EndpointError::Disconnected,
+            })?;
+        Ok(handle)
     }
     fn disconnect(&mut self) {
         self.stop.store(true, Ordering::Release);
@@ -204,4 +239,32 @@ impl Drop for SerialEndpoint {
     fn drop(&mut self) {
         self.disconnect();
     }
+}
+
+fn write_payload(
+    port: &mut dyn serialport::SerialPort,
+    bytes: &[u8],
+    stop: &AtomicBool,
+    cancelled: Option<&AtomicBool>,
+    bus: &TrafficBus,
+    id: &EndpointId,
+) -> Result<bool, EndpointError> {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        if stop.load(Ordering::Acquire)
+            || cancelled.is_some_and(|flag| flag.load(Ordering::Acquire))
+        {
+            return Ok(false);
+        }
+        match port.write(&bytes[offset..]) {
+            Ok(0) => return Err(EndpointError::Io("serial write returned zero bytes".into())),
+            Ok(count) => {
+                bus.publish(id.clone(), Direction::Tx, &bytes[offset..offset + count]);
+                offset += count;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(EndpointError::Io(e.to_string())),
+        }
+    }
+    Ok(true)
 }

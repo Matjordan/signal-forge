@@ -1,8 +1,12 @@
+mod preset_ui;
+
 use eframe::egui::{self, Color32, RichText};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use signal_forge::{
     config::{FlowControl, Parity, SerialSettings, WorkspaceConfig},
-    endpoint::{ConnectionState, Endpoint},
+    endpoint::{ConnectionState, Endpoint, EndpointId},
+    presets::{Preset, PresetLibrary},
+    repeat::{RepeatHandle, RepeatSpec},
     send::{self, Encoding, LineEnding},
     serial::{self, SerialEndpoint},
     traffic::{self, Direction, TrafficBus, TrafficEvent},
@@ -30,6 +34,10 @@ struct Terminal {
     escapes: bool,
     ending: LineEnding,
     error: Option<String>,
+    repeat: Option<RepeatHandle>,
+    repeat_interval_ms: u64,
+    repeat_count: u64,
+    continuous: bool,
     rx_bytes: u64,
     tx_bytes: u64,
 }
@@ -48,6 +56,10 @@ impl Terminal {
             escapes: true,
             ending: LineEnding::None,
             error: None,
+            repeat: None,
+            repeat_interval_ms: 1000,
+            repeat_count: 10,
+            continuous: false,
             rx_bytes: 0,
             tx_bytes: 0,
         }
@@ -72,10 +84,38 @@ impl Terminal {
             Err(e) => Some(e.to_string()),
         };
     }
+    fn start_repeat(&mut self) {
+        self.error = match send::encode(&self.input, self.encoding, self.escapes, self.ending) {
+            Ok(bytes) => {
+                let spec = RepeatSpec {
+                    interval: Duration::from_millis(self.repeat_interval_ms),
+                    count: if self.continuous {
+                        None
+                    } else {
+                        Some(self.repeat_count)
+                    },
+                };
+                match self.endpoint.start_repeat(bytes, spec) {
+                    Ok(handle) => {
+                        self.repeat = Some(handle);
+                        None
+                    }
+                    Err(error) => Some(error.to_string()),
+                }
+            }
+            Err(error) => Some(error.to_string()),
+        };
+    }
+    fn stop_repeat(&self) {
+        if let Some(handle) = &self.repeat {
+            handle.cancel();
+        }
+    }
 }
 
 struct TerminalViewer<'a> {
     bus: &'a TrafficBus,
+    selected: &'a mut Option<EndpointId>,
 }
 impl TabViewer for TerminalViewer<'_> {
     type Tab = Terminal;
@@ -90,6 +130,10 @@ impl TabViewer for TerminalViewer<'_> {
             .into()
     }
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|input| input.pointer.any_pressed())
+        {
+            *self.selected = Some(tab.endpoint.id().clone());
+        }
         ui.push_id(tab.endpoint.id().0.clone(), |ui| {
             ui.horizontal_wrapped(|ui| {
                 let connected = tab.endpoint.state() == ConnectionState::Connected;
@@ -161,6 +205,7 @@ impl TabViewer for TerminalViewer<'_> {
                     .clicked()
                 {
                     if connected {
+                        tab.stop_repeat();
                         tab.endpoint.disconnect();
                     } else {
                         tab.endpoint.disconnect();
@@ -212,7 +257,7 @@ impl TabViewer for TerminalViewer<'_> {
             ui.label("Display paused; new rows are discarded while serial I/O continues.");
         }
         ui.separator();
-        let terminal_height = (ui.available_height() - 140.0).max(80.0);
+        let terminal_height = (ui.available_height() - 205.0).max(80.0);
         egui::Frame::new()
             .fill(Color32::from_rgb(7, 13, 20))
             .inner_margin(6.0)
@@ -309,6 +354,63 @@ impl TabViewer for TerminalViewer<'_> {
                 tab.send();
             }
         });
+        ui.horizontal_wrapped(|ui| {
+            let active = tab.repeat.as_ref().is_some_and(|handle| handle.is_active());
+            ui.label("Repeat every");
+            ui.add_enabled(
+                !active,
+                egui::DragValue::new(&mut tab.repeat_interval_ms)
+                    .range(1..=86400000)
+                    .suffix(" ms"),
+            );
+            ui.add_enabled(
+                !active,
+                egui::Checkbox::new(&mut tab.continuous, "Until stopped"),
+            );
+            if !tab.continuous {
+                ui.label("Count");
+                ui.add_enabled(
+                    !active,
+                    egui::DragValue::new(&mut tab.repeat_count).range(1..=1000000),
+                );
+            }
+            if ui
+                .add_enabled(
+                    !active && tab.endpoint.state() == ConnectionState::Connected,
+                    egui::Button::new("Start repeat"),
+                )
+                .clicked()
+            {
+                tab.start_repeat();
+            }
+            if ui
+                .add_enabled(
+                    active,
+                    egui::Button::new("Stop repeat").fill(Color32::from_rgb(140, 40, 50)),
+                )
+                .clicked()
+            {
+                tab.stop_repeat();
+            }
+        });
+        if let Some(handle) = &tab.repeat {
+            let status = handle.status();
+            let total = status
+                .count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "continuous".into());
+            ui.label(
+                RichText::new(format!(
+                    "Repeat: {:?} · {} / {} fully sent",
+                    status.state, status.sent, total
+                ))
+                .color(if handle.is_active() {
+                    ACCENT
+                } else {
+                    Color32::GRAY
+                }),
+            );
+        }
         if let Some(error) = &tab.error {
             ui.colored_label(Color32::LIGHT_RED, error);
         }
@@ -317,12 +419,23 @@ impl TabViewer for TerminalViewer<'_> {
         );
     }
     fn on_close(&mut self, tab: &mut Terminal) -> bool {
+        tab.stop_repeat();
         tab.endpoint.disconnect();
         true
     }
 }
 
 pub struct Workbench {
+    library: PresetLibrary,
+    library_ok: bool,
+    profile_index: usize,
+    new_profile: String,
+    profile_file: String,
+    preset_editor_open: bool,
+    editor_profile: usize,
+    editor_index: Option<usize>,
+    preset_draft: Preset,
+    selected: Option<EndpointId>,
     dock: DockState<Terminal>,
     bus: TrafficBus,
     traffic: Receiver<Arc<TrafficEvent>>,
@@ -340,14 +453,31 @@ impl Workbench {
         style.visuals.window_fill = Color32::from_rgb(20, 30, 42);
         style.visuals.selection.bg_fill = Color32::from_rgb(28, 76, 128);
         cc.egui_ctx.set_style(style);
-        let (config, error, config_recoverable) = match WorkspaceConfig::load() {
+        let (config, mut error, config_recoverable) = match WorkspaceConfig::load() {
             Ok(c) => (c, None, true),
             Err(e) => (WorkspaceConfig::default(), Some(e), false),
+        };
+        let (library, library_ok) = match PresetLibrary::load() {
+            Ok(library) => (library, true),
+            Err(message) => {
+                error = Some(message);
+                (PresetLibrary::default(), false)
+            }
         };
         let settings = config.ports.first().cloned().unwrap_or_default();
         let bus = TrafficBus::default();
         let traffic = bus.subscribe(4096);
         let mut app = Self {
+            library,
+            library_ok,
+            profile_index: 0,
+            new_profile: String::new(),
+            profile_file: String::new(),
+            preset_editor_open: false,
+            editor_profile: 0,
+            editor_index: None,
+            preset_draft: Preset::default(),
+            selected: None,
             dock: DockState::new(Vec::new()),
             bus,
             traffic,
@@ -394,6 +524,7 @@ impl Workbench {
             Ok(endpoint) => {
                 self.config.ports.retain(|s| s.path != self.settings.path);
                 self.config.ports.push(self.settings.clone());
+                self.selected = Some(endpoint.id().clone());
                 let tab = Terminal::new(endpoint, self.settings.clone());
                 if self.dock.iter_all_tabs().count() == 1 {
                     self.dock
@@ -575,6 +706,14 @@ impl eframe::App for Workbench {
                 ui.separator();
                 self.settings_ui(ui);
             });
+        egui::SidePanel::right("presets")
+            .resizable(true)
+            .default_width(270.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.presets_ui(ui));
+            });
+        self.preset_editor(ctx);
+        self.preset_shortcuts(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.dock.iter_all_tabs().count() == 0 {
                 ui.vertical_centered(|ui| {
@@ -589,8 +728,13 @@ impl eframe::App for Workbench {
                     );
                 });
             } else {
-                DockArea::new(&mut self.dock)
-                    .show_inside(ui, &mut TerminalViewer { bus: &self.bus });
+                DockArea::new(&mut self.dock).show_inside(
+                    ui,
+                    &mut TerminalViewer {
+                        bus: &self.bus,
+                        selected: &mut self.selected,
+                    },
+                );
             }
         });
     }

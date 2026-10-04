@@ -131,3 +131,185 @@ fn peer_close_faults_without_panicking() {
     assert!(matches!(endpoint.state(), ConnectionState::Fault(_)));
     assert!(endpoint.send(vec![1]).is_err());
 }
+
+fn wait_repeat(handle: &signal_forge::repeat::RepeatHandle) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while handle.is_active() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!handle.is_active(), "repeat job did not finish");
+}
+fn assert_no_more_bytes(master: &mut File) {
+    let deadline = Instant::now() + Duration::from_millis(100);
+    let mut byte = [0];
+    while Instant::now() < deadline {
+        match master.read(&mut byte) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(5))
+            }
+            result => panic!("unexpected bytes or read error after cancellation: {result:?}"),
+        }
+    }
+}
+
+#[test]
+fn repeat_writes_exact_count_with_the_same_text_and_hex_encoding() {
+    use signal_forge::repeat::{RepeatSpec, RepeatState};
+    let (mut master, path, _slave) = pty();
+    let bus = TrafficBus::default();
+    let events = bus.subscribe(64);
+    let endpoint = SerialEndpoint::open(
+        &SerialSettings {
+            path,
+            ..Default::default()
+        },
+        bus,
+    )
+    .unwrap();
+    for (text, encoding, escapes, ending, expected) in [
+        (
+            "test\\r\\n",
+            Encoding::Text,
+            true,
+            LineEnding::None,
+            b"test\r\n".as_slice(),
+        ),
+        (
+            "00 FF",
+            Encoding::Hex,
+            false,
+            LineEnding::CrLf,
+            &[0, 255, 13, 10],
+        ),
+    ] {
+        let payload = encode(text, encoding, escapes, ending).unwrap();
+        let handle = endpoint
+            .start_repeat(
+                payload,
+                RepeatSpec {
+                    interval: Duration::from_millis(10),
+                    count: Some(3),
+                },
+            )
+            .unwrap();
+        let repeated = expected.repeat(3);
+        read_bytes(&mut master, &repeated);
+        received(&events, Direction::Tx, &repeated);
+        wait_repeat(&handle);
+        assert_eq!(handle.status().state, RepeatState::Completed);
+        assert_eq!(handle.status().sent, 3);
+        assert_no_more_bytes(&mut master);
+    }
+}
+
+#[test]
+fn repeat_cancellation_is_independent_per_port_and_disconnect_cancels() {
+    use signal_forge::repeat::{RepeatSpec, RepeatState};
+    let (mut first, path_first, _slave_first) = pty();
+    let (mut second, path_second, _slave_second) = pty();
+    let a = SerialEndpoint::open(
+        &SerialSettings {
+            path: path_first,
+            ..Default::default()
+        },
+        TrafficBus::default(),
+    )
+    .unwrap();
+    let mut b = SerialEndpoint::open(
+        &SerialSettings {
+            path: path_second,
+            ..Default::default()
+        },
+        TrafficBus::default(),
+    )
+    .unwrap();
+    let a_job = a
+        .start_repeat(
+            vec![1],
+            RepeatSpec {
+                interval: Duration::from_secs(30),
+                count: None,
+            },
+        )
+        .unwrap();
+    let b_job = b
+        .start_repeat(
+            vec![2],
+            RepeatSpec {
+                interval: Duration::from_millis(60),
+                count: Some(4),
+            },
+        )
+        .unwrap();
+    read_bytes(&mut first, &[1]);
+    a_job.cancel();
+    assert_eq!(a_job.status().state, RepeatState::Cancelled);
+    assert_no_more_bytes(&mut first);
+    read_bytes(&mut second, &[2, 2, 2, 2]);
+    wait_repeat(&b_job);
+    assert_eq!(b_job.status().state, RepeatState::Completed);
+    let b_job = b
+        .start_repeat(
+            vec![3],
+            RepeatSpec {
+                interval: Duration::from_secs(30),
+                count: None,
+            },
+        )
+        .unwrap();
+    read_bytes(&mut second, &[3]);
+    b.disconnect();
+    assert_eq!(b_job.status().state, RepeatState::Cancelled);
+    assert_no_more_bytes(&mut second);
+}
+
+#[test]
+fn repeat_unplug_and_drop_cancel_without_restart() {
+    use signal_forge::repeat::{RepeatSpec, RepeatState};
+    let (mut master, path, slave) = pty();
+    let endpoint = SerialEndpoint::open(
+        &SerialSettings {
+            path: path.clone(),
+            ..Default::default()
+        },
+        TrafficBus::default(),
+    )
+    .unwrap();
+    let handle = endpoint
+        .start_repeat(
+            vec![1],
+            RepeatSpec {
+                interval: Duration::from_secs(30),
+                count: None,
+            },
+        )
+        .unwrap();
+    read_bytes(&mut master, &[1]);
+    drop(slave);
+    drop(master);
+    wait_repeat(&handle);
+    assert!(matches!(handle.status().state, RepeatState::Failed(_)));
+    drop(endpoint);
+    let (mut master, path, _slave) = pty();
+    let endpoint = SerialEndpoint::open(
+        &SerialSettings {
+            path,
+            ..Default::default()
+        },
+        TrafficBus::default(),
+    )
+    .unwrap();
+    let handle = endpoint
+        .start_repeat(
+            vec![2],
+            RepeatSpec {
+                interval: Duration::from_secs(30),
+                count: None,
+            },
+        )
+        .unwrap();
+    read_bytes(&mut master, &[2]);
+    drop(endpoint);
+    assert_eq!(handle.status().state, RepeatState::Cancelled);
+    assert_no_more_bytes(&mut master);
+}

@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux native dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick xdotool
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check Rust formatting
@@ -19,7 +19,7 @@ jobs:
         run: cargo build --locked --all-targets
       - name: Unit and PTY integration tests
         run: cargo test --locked --all-targets
-      - name: Graphical launch with two PTY endpoints
+      - name: Graphical launch and real preset/repeat byte flow
         run: xvfb-run -a -s "-screen 0 1440x900x24" python3 scripts/smoke.py
       - name: Upload graphical smoke screenshot
         uses: actions/upload-artifact@v4

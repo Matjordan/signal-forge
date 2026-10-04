@@ -1,3 +1,4 @@
+use crate::repeat::{RepeatHandle, RepeatSpec};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -28,5 +29,7 @@ pub trait Endpoint: Send {
     fn display_name(&self) -> &str;
     fn state(&self) -> ConnectionState;
     fn send(&self, bytes: Vec<u8>) -> Result<(), EndpointError>;
+    fn start_repeat(&self, bytes: Vec<u8>, spec: RepeatSpec)
+        -> Result<RepeatHandle, EndpointError>;
     fn disconnect(&mut self);
 }
