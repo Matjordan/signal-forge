@@ -227,14 +227,23 @@ impl Workbench {
                 }
             }
         }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::O)) {
+        if ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::O)
+        }) {
             if let Some(id) = &self.selected {
-                if let Some((_, tab)) = self.dock.iter_all_tabs_mut().find(|(_, tab)| tab.endpoint.id() == id) {
+                if let Some((_, tab)) = self
+                    .dock
+                    .iter_all_tabs_mut()
+                    .find(|(_, tab)| tab.endpoint.id() == id)
+                {
                     if tab.endpoint.state() != ConnectionState::Connected {
                         tab.stop_repeat();
                         tab.endpoint.disconnect();
                         match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
-                            Ok(endpoint) => { tab.endpoint = Box::new(endpoint); tab.error = None; }
+                            Ok(endpoint) => {
+                                tab.endpoint = Box::new(endpoint);
+                                tab.error = None;
+                            }
                             Err(error) => tab.error = Some(error.to_string()),
                         }
                     }
@@ -247,13 +256,18 @@ impl Workbench {
                     .iter_all_tabs()
                     .find(|(_, tab)| tab.endpoint.id() == id)
                     .and_then(|((surface, node), _)| match &self.dock[surface][node] {
-                        Node::Leaf { tabs, .. } => tabs.iter().position(|tab| tab.endpoint.id() == id).map(|index| (surface, node, TabIndex(index))),
+                        Node::Leaf { tabs, .. } => tabs
+                            .iter()
+                            .position(|tab| tab.endpoint.id() == id)
+                            .map(|index| (surface, node, TabIndex(index))),
                         _ => None,
                     })
             });
             if let Some(location) = location {
                 if let Some(mut tab) = self.dock.remove_tab(location) {
-                    self.config.ports.retain(|settings| settings.path != tab.settings.path);
+                    self.config
+                        .ports
+                        .retain(|settings| settings.path != tab.settings.path);
                     self.config.ports.push(tab.settings.clone());
                     tab.stop_repeat();
                     tab.endpoint.disconnect();

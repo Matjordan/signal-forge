@@ -68,7 +68,19 @@ impl Workbench {
                 });
                 self.error = None;
             }
-            Err(error) => self.error = Some(format!("Bridge {} ↔ {}: {error}", self.bridge_a.as_ref().map(|id| id.0.as_str()).unwrap_or("A not selected"), self.bridge_b.as_ref().map(|id| id.0.as_str()).unwrap_or("B not selected"))),
+            Err(error) => {
+                self.error = Some(format!(
+                    "Bridge {} ↔ {}: {error}",
+                    self.bridge_a
+                        .as_ref()
+                        .map(|id| id.0.as_str())
+                        .unwrap_or("A not selected"),
+                    self.bridge_b
+                        .as_ref()
+                        .map(|id| id.0.as_str())
+                        .unwrap_or("B not selected")
+                ))
+            }
         }
     }
     pub(super) fn connection_shortcuts(&mut self, ctx: &egui::Context) {

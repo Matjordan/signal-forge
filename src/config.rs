@@ -84,7 +84,11 @@ impl WorkspaceConfig {
     }
     pub fn parse(text: &str) -> Result<Self, String> {
         let value: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-        if value.get("version").and_then(|version| version.as_u64()).is_none() {
+        if value
+            .get("version")
+            .and_then(|version| version.as_u64())
+            .is_none()
+        {
             return Err("Workspace has no valid version".into());
         }
         let mut config: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;

@@ -106,7 +106,7 @@ A slow subscriber loses monitoring events instead of blocking a serial worker. S
 Each passing CI run builds and uploads **signal-forge-linux-x86_64** with a release
 binary, desktop launcher, installer, documentation, linked-library list, and SHA-256
 checksum. Download it from the repository's **Actions** run, unzip the artifact,
-verify `sha256sum -c *.sha256`, unpack the tarball, and run `bash install.sh`.
+verify `sha256sum -c *.sha256`, unpack the tarball, and run `bash install.sh` (requires Python 3).
 The default installation is `~/.local`; an optional path argument changes it.
 You can also run the included `bin/signal-forge` directly. The package targets
 Ubuntu 24.04 x86_64 or compatible newer glibc Linux with X11/Wayland and OpenGL.

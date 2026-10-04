@@ -491,7 +491,8 @@ impl TabViewer for TerminalViewer<'_> {
         );
     }
     fn on_close(&mut self, tab: &mut Terminal) -> bool {
-        self.known_ports.retain(|settings| settings.path != tab.settings.path);
+        self.known_ports
+            .retain(|settings| settings.path != tab.settings.path);
         self.known_ports.push(tab.settings.clone());
         tab.stop_repeat();
         tab.endpoint.disconnect();

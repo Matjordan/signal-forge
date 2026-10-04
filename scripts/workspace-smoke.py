@@ -1,5 +1,4 @@
 """Save, restart disconnected, reconnect explicitly, and recover corrupt config."""
-import base64
 import json
 import os
 from pathlib import Path
@@ -83,7 +82,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         key(window, 'ctrl+s')
         assert config_path.read_bytes() == broken
         # Recovery action appears immediately below the bottom error line.
-        subprocess.run(['xdotool', 'mousemove', '--window', window, '150', '875', 'click', '1'], check=True)
+        subprocess.run(['xdotool', 'mousemove', '--window', window, '150', '890', 'click', '1'], check=True)
         time.sleep(.3)
         # Coordinates are verified by the required backup, not assumed successful.
         backups = list(config_path.parent.glob('workspace.json.recovery-*'))
@@ -95,9 +94,6 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
     except Exception:
         subprocess.run(['import', '-window', 'root', '/tmp/workspace-failure.png'], check=False)
         subprocess.run(['convert', '/tmp/workspace-failure.png', '-resize', '1280x', '-quality', '80', '/tmp/workspace-failure.jpg'], check=False)
-        print('WORKSPACE_FAILURE_BEGIN', flush=True)
-        print(base64.b64encode(Path('/tmp/workspace-failure.jpg').read_bytes()).decode(), flush=True)
-        print('WORKSPACE_FAILURE_END', flush=True)
         raise
     finally:
         if process is not None and process.poll() is None:
