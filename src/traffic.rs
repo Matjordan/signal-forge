@@ -1,5 +1,6 @@
 use crate::endpoint::EndpointId;
 use std::sync::{
+    atomic::{AtomicU64, Ordering},
     mpsc::{self, Receiver, SyncSender, TrySendError},
     Arc, Mutex,
 };
@@ -22,11 +23,13 @@ pub struct TrafficEvent {
 
 struct Subscriber {
     sender: SyncSender<Arc<TrafficEvent>>,
-    dropped: u64,
+    dropped: Arc<AtomicU64>,
+    id: u64,
 }
 #[derive(Default)]
 struct Inner {
     sequence: u64,
+    next_subscriber: u64,
     subscribers: Vec<Subscriber>,
 }
 
@@ -38,13 +41,26 @@ pub struct TrafficBus(Arc<Mutex<Inner>>);
 
 impl TrafficBus {
     pub fn subscribe(&self, capacity: usize) -> Receiver<Arc<TrafficEvent>> {
+        self.subscribe_tracked(capacity).receiver
+    }
+    pub fn subscribe_tracked(&self, capacity: usize) -> TrafficSubscription {
         let (sender, receiver) = mpsc::sync_channel(capacity.max(1));
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .subscribers
-            .push(Subscriber { sender, dropped: 0 });
-        receiver
+        let dropped = Arc::new(AtomicU64::new(0));
+        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        inner.next_subscriber += 1;
+        let id = inner.next_subscriber;
+        inner.subscribers.push(Subscriber {
+            sender,
+            dropped: dropped.clone(),
+            id,
+        });
+        TrafficSubscription {
+            receiver,
+            dropped,
+            id,
+            capacity: capacity.max(1),
+            bus: self.clone(),
+        }
     }
 
     pub fn publish(&self, endpoint: EndpointId, direction: Direction, bytes: &[u8]) {
@@ -63,7 +79,7 @@ impl TrafficBus {
             match subscriber.sender.try_send(event.clone()) {
                 Ok(()) => true,
                 Err(TrySendError::Full(_)) => {
-                    subscriber.dropped += 1;
+                    subscriber.dropped.fetch_add(1, Ordering::Relaxed);
                     true
                 }
                 Err(TrySendError::Disconnected(_)) => false,
@@ -77,8 +93,32 @@ impl TrafficBus {
             .unwrap_or_else(|e| e.into_inner())
             .subscribers
             .iter()
-            .map(|s| s.dropped)
+            .map(|s| s.dropped.load(Ordering::Relaxed))
             .sum()
+    }
+}
+
+/// A dedicated consumer's exact drop count and a synchronized capture cutoff.
+/// Closing detaches the sender under the publish lock; queued events can then
+/// be drained without newly arriving traffic extending the capture indefinitely.
+pub struct TrafficSubscription {
+    pub receiver: Receiver<Arc<TrafficEvent>>,
+    pub capacity: usize,
+    dropped: Arc<AtomicU64>,
+    id: u64,
+    bus: TrafficBus,
+}
+impl TrafficSubscription {
+    pub fn dropped_events(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+    pub fn close(&self) {
+        self.bus
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .subscribers
+            .retain(|s| s.id != self.id);
     }
 }
 
