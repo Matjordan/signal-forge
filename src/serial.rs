@@ -47,6 +47,7 @@ impl SerialEndpoint {
                                 // a partial write before a device fails.
                                 let mut offset = 0;
                                 while offset < bytes.len() {
+                                    if worker_stop.load(Ordering::Acquire) { return Ok(()); }
                                     match port.write(&bytes[offset..]) {
                                         Ok(0) => return Err("serial write returned zero bytes".into()),
                                         Ok(count) => { bus.publish(worker_id.clone(),Direction::Tx,&bytes[offset..offset+count]); offset += count; }

@@ -17,3 +17,15 @@ jobs:
         run: cargo build --all-targets
       - name: Unit and PTY integration tests
         run: cargo test --all-targets
+  design-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render the repository design reference for review
+        run: |
+          sudo apt-get update && sudo apt-get install -y imagemagick
+          convert a_detailed_widescreen_dark_themed_desktop_applicat.png -resize 960x -quality 75 /tmp/signal-forge-reference.jpg
+          echo "REFERENCE_IMAGE_BEGIN"
+          base64 -w0 /tmp/signal-forge-reference.jpg
+          echo
+          echo "REFERENCE_IMAGE_END"
