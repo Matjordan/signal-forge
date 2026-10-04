@@ -1,5 +1,6 @@
 mod connection_ui;
 mod preset_ui;
+mod workspace_ui;
 
 use eframe::egui::{self, Color32, RichText};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
@@ -241,6 +242,7 @@ impl TabViewer for TerminalViewer<'_> {
                         egui::Button::new(if connected { "Disconnect" } else { "Reconnect" })
                             .fill(Color32::from_rgb(21, 99, 218)),
                     )
+                    .on_hover_text("Disconnect stops repeats and attached bridges; capture finishes. Reconnect explicitly opens this device.")
                     .clicked()
                 {
                     if connected {
@@ -478,7 +480,7 @@ impl TabViewer for TerminalViewer<'_> {
             );
         }
         if let Some(error) = &tab.error {
-            ui.colored_label(Color32::LIGHT_RED, error);
+            ui.colored_label(Color32::LIGHT_RED, format!("{}: {error}", tab.settings.path));
         }
         ui.small(
             "Enter sends · Up cycles previous messages · Down returns to draft · History is per terminal.",
@@ -565,6 +567,7 @@ impl Workbench {
             error,
             config_recoverable,
         };
+        app.restore_workspace();
         app.refresh();
         for path in initial_ports {
             app.settings = app
@@ -584,18 +587,19 @@ impl Workbench {
     fn refresh(&mut self) {
         match serial::discover() {
             Ok(ports) => self.ports = ports,
-            Err(error) => self.error = Some(error.to_string()),
+            Err(error) => self.error = Some(format!("{}: {error}", self.settings.path)),
         }
     }
     fn connect(&mut self) {
-        if self
-            .dock
-            .iter_all_tabs()
-            .any(|(_, tab)| tab.endpoint.display_name() == self.settings.path)
-        {
-            self.error = Some(
-                "This device already has a terminal. Close its tab before reconnecting.".into(),
-            );
+        if let Some((_, tab)) = self.dock.iter_all_tabs_mut().find(|(_, tab)| tab.settings.path == self.settings.path) {
+            if tab.endpoint.state() == ConnectionState::Connected {
+                self.error = Some(format!("{} already connected", self.settings.path));
+                return;
+            }
+            match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
+                Ok(endpoint) => { tab.endpoint = Box::new(endpoint); tab.error = None; self.selected = Some(tab.endpoint.id().clone()); self.error = None; }
+                Err(error) => self.error = Some(format!("{}: {error}", tab.settings.path)),
+            }
             return;
         }
         match SerialEndpoint::open(&self.settings, self.bus.clone()) {
@@ -613,7 +617,7 @@ impl Workbench {
                 }
                 self.error = None;
             }
-            Err(error) => self.error = Some(error.to_string()),
+            Err(error) => self.error = Some(format!("{}: {error}", self.settings.path)),
         }
     }
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
@@ -712,17 +716,11 @@ impl eframe::App for Workbench {
                     if ui
                         .add_enabled(
                             self.config_recoverable,
-                            egui::Button::new("Save port settings"),
+                            egui::Button::new("Save workspace"),
                         )
                         .clicked()
                     {
-                        for (_, tab) in self.dock.iter_all_tabs() {
-                            self.config
-                                .ports
-                                .retain(|settings| settings.path != tab.settings.path);
-                            self.config.ports.push(tab.settings.clone());
-                        }
-                        self.error = self.config.save().err();
+                        self.save_workspace();
                     }
                     if ui.button("Refresh devices").clicked() {
                         self.refresh();
@@ -749,6 +747,12 @@ impl eframe::App for Workbench {
             });
             if let Some(error) = &self.error {
                 ui.colored_label(Color32::LIGHT_RED, error);
+            }
+            if !self.config_recoverable && ui.button("Back up original and reset workspace").clicked() {
+                match WorkspaceConfig::backup_for_recovery() {
+                    Ok(path) => { self.config_recoverable = true; self.error = Some(format!("Original workspace preserved at {}. Save to write the current workspace.", path.display())); }
+                    Err(error) => self.error = Some(error),
+                }
             }
         });
         egui::SidePanel::left("devices")
@@ -798,6 +802,7 @@ impl eframe::App for Workbench {
         self.preset_editor(ctx);
         self.preset_shortcuts(ctx);
         self.connection_shortcuts(ctx);
+        self.workspace_shortcuts(ctx);
         self.bridge_monitors(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.dock.iter_all_tabs().count() == 0 {

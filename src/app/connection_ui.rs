@@ -254,6 +254,7 @@ impl Workbench {
 }
 impl Drop for Workbench {
     fn drop(&mut self) {
+        self.save_workspace();
         self.bridges.clear();
         for (_, tab) in self.dock.iter_all_tabs_mut() {
             tab.endpoint.disconnect();

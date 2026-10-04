@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Signal Forge
+Comment=Serial terminals, PTY pairs, bridges and traffic capture
+Exec=signal-forge
+Icon=utilities-terminal
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=signal-forge
