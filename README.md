@@ -112,8 +112,12 @@ You can also run the included `bin/signal-forge` directly. The package targets
 Ubuntu 24.04 x86_64 or compatible newer glibc Linux with X11/Wayland and OpenGL.
 
 Build the same package locally with `bash scripts/package-linux.sh`. Configuration
-and captures are excluded from the archive. No GitHub release is published by CI;
-the downloadable artifact is available before merge for review.
+and captures are excluded from the archive. Merges to `main` automatically run the full build/test/package pipeline and publish
+a GitHub Release with the archive and checksum. Each commit gets a unique
+`build-<commit>` tag, so version bumps are not required for every merge. Releases
+are published only after all checks pass; rerunning the workflow updates the same
+commit release. Direct pushes to `main` use the same automation. PR artifacts
+remain available before merge for review.
 
 ## Verification
 
