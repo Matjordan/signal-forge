@@ -607,6 +607,8 @@ impl Workbench {
                 self.error = Some(format!("{} already connected", self.settings.path));
                 return;
             }
+            tab.settings = self.settings.clone();
+            tab.endpoint.disconnect();
             match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
                 Ok(endpoint) => {
                     tab.endpoint = Box::new(endpoint);
@@ -684,7 +686,7 @@ impl Workbench {
         if ui
             .add_enabled(
                 !self.settings.path.is_empty(),
-                egui::Button::new("New port terminal").fill(Color32::from_rgb(21, 99, 218)),
+                egui::Button::new("Open / reconnect terminal").fill(Color32::from_rgb(21, 99, 218)),
             )
             .clicked()
         {
