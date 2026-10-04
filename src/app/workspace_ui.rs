@@ -153,7 +153,8 @@ impl Workbench {
                 .retain(|settings| settings.path != tab.settings.path);
             self.config.ports.push(tab.settings.clone());
         }
-        self.config.ports.truncate(256);
+        let excess = self.config.ports.len().saturating_sub(256);
+        self.config.ports.drain(..excess);
         self.config.layout = snapshot(self.dock.main_surface(), NodeIndex::root());
         self.config.windows.clear();
         for index in 1..self.dock.surfaces_count() {
@@ -252,6 +253,8 @@ impl Workbench {
             });
             if let Some(location) = location {
                 if let Some(mut tab) = self.dock.remove_tab(location) {
+                    self.config.ports.retain(|settings| settings.path != tab.settings.path);
+                    self.config.ports.push(tab.settings.clone());
                     tab.stop_repeat();
                     tab.endpoint.disconnect();
                 }

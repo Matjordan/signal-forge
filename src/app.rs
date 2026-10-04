@@ -156,6 +156,7 @@ impl Terminal {
 struct TerminalViewer<'a> {
     bus: &'a TrafficBus,
     selected: &'a mut Option<EndpointId>,
+    known_ports: &'a mut Vec<SerialSettings>,
 }
 impl TabViewer for TerminalViewer<'_> {
     type Tab = Terminal;
@@ -490,6 +491,8 @@ impl TabViewer for TerminalViewer<'_> {
         );
     }
     fn on_close(&mut self, tab: &mut Terminal) -> bool {
+        self.known_ports.retain(|settings| settings.path != tab.settings.path);
+        self.known_ports.push(tab.settings.clone());
         tab.stop_repeat();
         tab.endpoint.disconnect();
         true
@@ -590,7 +593,7 @@ impl Workbench {
     fn refresh(&mut self) {
         match serial::discover() {
             Ok(ports) => self.ports = ports,
-            Err(error) => self.error = Some(format!("{}: {error}", self.settings.path)),
+            Err(error) => self.error = Some(format!("Device discovery: {error}")),
         }
     }
     fn connect(&mut self) {
@@ -832,6 +835,7 @@ impl eframe::App for Workbench {
                     &mut TerminalViewer {
                         bus: &self.bus,
                         selected: &mut self.selected,
+                        known_ports: &mut self.config.ports,
                     },
                 );
             }

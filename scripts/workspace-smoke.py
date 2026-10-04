@@ -1,4 +1,5 @@
 """Save, restart disconnected, reconnect explicitly, and recover corrupt config."""
+import base64
 import json
 import os
 from pathlib import Path
@@ -91,6 +92,13 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         assert json.loads(config_path.read_text())['version'] == 2
         quit_app(process, window)
         print('Workspace save/restart, disconnected restore, no automatic TX, corrupt-file preservation and backup recovery passed.', flush=True)
+    except Exception:
+        subprocess.run(['import', '-window', 'root', '/tmp/workspace-failure.png'], check=False)
+        subprocess.run(['convert', '/tmp/workspace-failure.png', '-resize', '1280x', '-quality', '80', '/tmp/workspace-failure.jpg'], check=False)
+        print('WORKSPACE_FAILURE_BEGIN', flush=True)
+        print(base64.b64encode(Path('/tmp/workspace-failure.jpg').read_bytes()).decode(), flush=True)
+        print('WORKSPACE_FAILURE_END', flush=True)
+        raise
     finally:
         if process is not None and process.poll() is None:
             process.terminate()

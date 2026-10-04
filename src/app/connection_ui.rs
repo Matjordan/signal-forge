@@ -17,7 +17,7 @@ pub(super) struct BridgeView {
 impl Workbench {
     fn create_pair(&mut self) {
         if self.pairs.iter().any(|p| p.name == self.pair_name) {
-            self.error = Some("A pair with this name already exists".into());
+            self.error = Some(format!("PTY pair {} already exists", self.pair_name));
         } else {
             let directory = if self.pair_directory.trim().is_empty() {
                 None
@@ -35,7 +35,7 @@ impl Workbench {
                     self.pairs.push(pair);
                     self.error = None;
                 }
-                Err(error) => self.error = Some(error),
+                Err(error) => self.error = Some(format!("PTY pair {}: {error}", self.pair_name)),
             }
         }
     }
@@ -68,7 +68,7 @@ impl Workbench {
                 });
                 self.error = None;
             }
-            Err(error) => self.error = Some(error.to_string()),
+            Err(error) => self.error = Some(format!("Bridge {} ↔ {}: {error}", self.bridge_a.as_ref().map(|id| id.0.as_str()).unwrap_or("A not selected"), self.bridge_b.as_ref().map(|id| id.0.as_str()).unwrap_or("B not selected"))),
         }
     }
     pub(super) fn connection_shortcuts(&mut self, ctx: &egui::Context) {
