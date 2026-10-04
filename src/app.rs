@@ -5,8 +5,8 @@ use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use signal_forge::{
     config::{FlowControl, Parity, SerialSettings, WorkspaceConfig},
     endpoint::{ConnectionState, Endpoint, EndpointId},
-    repeat::{RepeatHandle, RepeatSpec},
     presets::{Preset, PresetLibrary},
+    repeat::{RepeatHandle, RepeatSpec},
     send::{self, Encoding, LineEnding},
     serial::{self, SerialEndpoint},
     traffic::{self, Direction, TrafficBus, TrafficEvent},
@@ -130,7 +130,8 @@ impl TabViewer for TerminalViewer<'_> {
             .into()
     }
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
-        if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|input| input.pointer.any_pressed()) {
+        if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|input| input.pointer.any_pressed())
+        {
             *self.selected = Some(tab.endpoint.id().clone());
         }
         ui.push_id(tab.endpoint.id().0.clone(), |ui| {
@@ -458,14 +459,25 @@ impl Workbench {
         };
         let (library, library_ok) = match PresetLibrary::load() {
             Ok(library) => (library, true),
-            Err(message) => { error = Some(message); (PresetLibrary::default(), false) }
+            Err(message) => {
+                error = Some(message);
+                (PresetLibrary::default(), false)
+            }
         };
         let settings = config.ports.first().cloned().unwrap_or_default();
         let bus = TrafficBus::default();
         let traffic = bus.subscribe(4096);
         let mut app = Self {
-            library, library_ok, profile_index:0, new_profile:String::new(), profile_file:String::new(),
-            preset_editor_open:false, editor_profile:0, editor_index:None, preset_draft:Preset::default(), selected:None,
+            library,
+            library_ok,
+            profile_index: 0,
+            new_profile: String::new(),
+            profile_file: String::new(),
+            preset_editor_open: false,
+            editor_profile: 0,
+            editor_index: None,
+            preset_draft: Preset::default(),
+            selected: None,
             dock: DockState::new(Vec::new()),
             bus,
             traffic,
@@ -694,9 +706,12 @@ impl eframe::App for Workbench {
                 ui.separator();
                 self.settings_ui(ui);
             });
-        egui::SidePanel::right("presets").resizable(true).default_width(270.0).show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| self.presets_ui(ui));
-        });
+        egui::SidePanel::right("presets")
+            .resizable(true)
+            .default_width(270.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.presets_ui(ui));
+            });
         self.preset_editor(ctx);
         self.preset_shortcuts(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -713,8 +728,13 @@ impl eframe::App for Workbench {
                     );
                 });
             } else {
-                DockArea::new(&mut self.dock)
-                    .show_inside(ui, &mut TerminalViewer { bus: &self.bus, selected:&mut self.selected });
+                DockArea::new(&mut self.dock).show_inside(
+                    ui,
+                    &mut TerminalViewer {
+                        bus: &self.bus,
+                        selected: &mut self.selected,
+                    },
+                );
             }
         });
     }

@@ -24,9 +24,18 @@ impl Workbench {
                 if tab.repeat.as_ref().is_some_and(|handle| handle.is_active()) {
                     Err("Stop the current repeat before starting a repeating preset".to_owned())
                 } else {
-                    tab.endpoint.start_repeat(bytes,spec).map(|handle| tab.repeat=Some(handle)).map_err(|e| e.to_string())
+                    tab.endpoint.start_repeat(bytes,spec).map(|handle| {
+                        tab.repeat=Some(handle);
+                        tab.repeat_interval_ms=spec.interval.as_millis() as u64;
+                        tab.continuous=spec.count.is_none();
+                        tab.repeat_count=spec.count.unwrap_or(10);
+                    }).map_err(|e| e.to_string())
                 }
             } else { tab.endpoint.send(bytes).map_err(|e| e.to_string()) };
+            if result.is_ok() {
+                tab.input=preset.payload.clone(); tab.encoding=preset.encoding;
+                tab.escapes=preset.escapes; tab.ending=preset.ending;
+            }
             self.error=result.err().map(|error| format!("{} — {}: {error}",preset.name,id.0));
             return;
         }
