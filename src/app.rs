@@ -421,9 +421,6 @@ impl TabViewer for TerminalViewer<'_> {
                 .clicked();
             if clicked || (enter && focused) {
                 tab.send();
-                if enter && focused {
-                    input.request_focus();
-                }
             }
         });
         ui.horizontal_wrapped(|ui| {
