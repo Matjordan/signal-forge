@@ -19,7 +19,7 @@ jobs:
         run: cargo build --locked --all-targets
       - name: Unit and PTY integration tests
         run: cargo test --locked --all-targets
-      - name: Graphical launch and real preset/repeat byte flow
+      - name: Graphical launch and real endpoint byte flow
         run: xvfb-run -a -s "-screen 0 1440x900x24" python3 scripts/smoke.py
       - name: Upload graphical smoke screenshot
         uses: actions/upload-artifact@v4

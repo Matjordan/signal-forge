@@ -14,5 +14,4 @@ thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
 
-[dev-dependencies]
 nix = { version = "0.29", features = ["term", "fs"] }
