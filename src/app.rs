@@ -85,7 +85,7 @@ impl TabViewer for TerminalViewer<'_> {
         } else {
             Color32::GRAY
         };
-        RichText::new(format!("● {}", tab.endpoint.display_name()))
+        RichText::new(format!("{}", tab.endpoint.display_name()))
             .color(color)
             .into()
     }
@@ -252,17 +252,20 @@ impl TabViewer for TerminalViewer<'_> {
                             } else {
                                 traffic::ascii(&event.bytes)
                             };
-                            ui.label(
-                                RichText::new(format!(
-                                    "{time}{}  {payload}",
-                                    if event.direction == Direction::Rx {
-                                        "RX"
-                                    } else {
-                                        "TX"
-                                    }
-                                ))
-                                .monospace()
-                                .color(color),
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(format!(
+                                        "{time}{}  {payload}",
+                                        if event.direction == Direction::Rx {
+                                            "RX"
+                                        } else {
+                                            "TX"
+                                        }
+                                    ))
+                                    .monospace()
+                                    .color(color),
+                                )
+                                .wrap_mode(egui::TextWrapMode::Extend),
                             );
                         }
                     });
@@ -490,7 +493,7 @@ impl eframe::App for Workbench {
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("⌁  Signal Forge")
+                    RichText::new("Signal Forge")
                         .strong()
                         .size(22.0)
                         .color(ACCENT),
@@ -547,24 +550,17 @@ impl eframe::App for Workbench {
                 if self.ports.is_empty() {
                     ui.label("No serial devices detected");
                 }
-                for path in &self.ports {
-                    if ui
-                        .selectable_label(self.settings.path == *path, path)
-                        .clicked()
-                    {
-                        self.settings = self
-                            .config
-                            .ports
-                            .iter()
-                            .find(|s| s.path == *path)
-                            .cloned()
-                            .unwrap_or_else(|| SerialSettings {
-                                path: path.clone(),
-                                ..Default::default()
-                            });
-                    }
-                }
-                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("device_list")
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        for path in &self.ports {
+                            if ui.selectable_label(self.settings.path == *path, path).clicked() {
+                                self.settings = self.config.ports.iter().find(|s| s.path == *path).cloned().unwrap_or_else(|| SerialSettings { path: path.clone(), ..Default::default() });
+                            }
+                        }
+                    });
+            ui.separator();
                 self.settings_ui(ui);
             });
         egui::CentralPanel::default().show(ctx, |ui| {
