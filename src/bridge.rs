@@ -68,6 +68,7 @@ impl Bridge {
         if [&*first_route,&*second_route].iter().any(|route|route.as_ref().is_some_and(|r|!r.shared.stopped.load(Ordering::Acquire))) {
             return Err(EndpointError::Io("An endpoint already belongs to a running bridge".into()));
         }
+        if a.writer.state()!=ConnectionState::Connected || b.writer.state()!=ConnectionState::Connected { return Err(EndpointError::Disconnected); }
         *first_route=Some(Route { shared:shared.clone(),destination:second.writer.clone(),source:first.id.clone(),destination_id:second.id.clone() });
         *second_route=Some(Route { shared:shared.clone(),destination:first.writer.clone(),source:second.id.clone(),destination_id:first.id.clone() });
         shared.stopped.store(false,Ordering::Release);

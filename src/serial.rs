@@ -6,7 +6,7 @@ use crate::{
     traffic::{Direction, TrafficBus},
 };
 use std::{
-    io::{Read, Write},
+    io::Read,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, SyncSender, TryRecvError, TrySendError},
@@ -39,6 +39,7 @@ pub struct SerialEndpoint {
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     bridge: BridgePort,
+    writer: Arc<SerialWriter>,
 }
 impl SerialEndpoint {
     pub fn open(settings: &SerialSettings, bus: TrafficBus) -> Result<Self, EndpointError> {
@@ -79,9 +80,10 @@ impl SerialEndpoint {
         let state = Arc::new(Mutex::new(ConnectionState::Connected));
         let stop = Arc::new(AtomicBool::new(false));
         let mut reader = port.try_clone().map_err(|e| EndpointError::Io(e.to_string()))?;
-        let writer = Arc::new(SerialWriter { port: Mutex::new(port), state: state.clone(), stop: stop.clone(), bus: bus.clone(), id: id.clone() });
+        let writer = Arc::new(SerialWriter { port: Mutex::new(Some(port)), state: state.clone(), stop: stop.clone(), bus: bus.clone(), id: id.clone() });
         let bridge = BridgePort::new(id.clone(), writer.clone());
         let worker_bridge = bridge.clone();
+        let worker_writer = writer.clone();
         let (tx, rx) = mpsc::sync_channel::<Command>(64);
         let worker_state = state.clone();
         let worker_stop = stop.clone();
@@ -100,7 +102,7 @@ impl SerialEndpoint {
                             }
                             match rx.try_recv() {
                                 Ok(Command::Send(bytes)) => {
-                                    if !writer.write(&bytes, &worker_stop)? {
+                                    if !worker_writer.write(&bytes, &worker_stop)? {
                                         return Ok(());
                                     }
                                 }
@@ -118,7 +120,7 @@ impl SerialEndpoint {
                         }
                         if let Some(job) = &mut repeat {
                             job.poll(Instant::now(), |bytes, cancelled| {
-                                writer.write(bytes, cancelled)
+                                worker_writer.write(bytes, cancelled)
                             })?;
                         }
                         if repeat.as_ref().is_some_and(|job| !job.is_active()) {
@@ -166,6 +168,7 @@ impl SerialEndpoint {
                         ConnectionState::Fault(error.to_string())
                     }
                 };
+                worker_writer.close();
                 worker_bridge.endpoint_closed(&format!("{next:?}"));
                 *worker_state.lock().unwrap_or_else(|e| e.into_inner()) = next;
             })
@@ -179,6 +182,7 @@ impl SerialEndpoint {
             stop,
             worker: Some(worker),
             bridge,
+            writer,
         })
     }
 }
@@ -235,6 +239,7 @@ impl Endpoint for SerialEndpoint {
                 log::error!("{} worker panicked", self.name);
             }
         }
+        self.writer.close();
         *self.state.lock().unwrap_or_else(|e| e.into_inner()) = ConnectionState::Disconnected;
     }
 }
@@ -273,7 +278,7 @@ fn write_payload(
 }
 
 struct SerialWriter {
-    port: Mutex<Box<dyn serialport::SerialPort>>,
+    port: Mutex<Option<Box<dyn serialport::SerialPort>>>,
     state: Arc<Mutex<ConnectionState>>,
     stop: Arc<AtomicBool>,
     bus: TrafficBus,
@@ -284,6 +289,7 @@ impl BridgeWriter for SerialWriter {
     fn write(&self, bytes: &[u8], cancelled: &AtomicBool) -> Result<bool, EndpointError> {
         if self.stop.load(Ordering::Acquire) { return Ok(false); }
         let mut port = self.port.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(port) = port.as_mut() else { return Err(EndpointError::Disconnected); };
         let result = write_payload(&mut **port, bytes, &self.stop, Some(cancelled), &self.bus, &self.id);
         if let Err(error) = &result {
             *self.state.lock().unwrap_or_else(|e| e.into_inner()) = ConnectionState::Fault(error.to_string());
@@ -291,4 +297,8 @@ impl BridgeWriter for SerialWriter {
         }
         result
     }
+}
+
+impl SerialWriter {
+    fn close(&self) { self.port.lock().unwrap_or_else(|e| e.into_inner()).take(); }
 }

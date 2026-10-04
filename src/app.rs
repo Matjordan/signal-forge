@@ -730,6 +730,7 @@ impl eframe::App for Workbench {
             });
         self.preset_editor(ctx);
         self.preset_shortcuts(ctx);
+        self.connection_shortcuts(ctx);
         self.bridge_monitors(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.dock.iter_all_tabs().count() == 0 {

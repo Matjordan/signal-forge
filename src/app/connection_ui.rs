@@ -9,23 +9,42 @@ pub(super) struct BridgeView {
     paused: bool,
 }
 impl Workbench {
+    fn create_pair(&mut self) {
+            if self.pairs.iter().any(|p| p.name == self.pair_name) {
+                self.error = Some("A pair with this name already exists".into());
+            } else {
+                let directory = if self.pair_directory.trim().is_empty() { None } else { Some(Path::new(&self.pair_directory)) };
+                match VirtualPair::create(&self.pair_name, directory) {
+                    Ok(pair) => { log::info!("Created PTY pair {}: {} <-> {}", pair.name, pair.paths[0], pair.paths[1]); self.pairs.push(pair); self.error = None; }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+    }
+    fn start_bridge(&mut self) {
+            let ports: Result<Vec<_>, _> = [&self.bridge_a, &self.bridge_b].iter().map(|selection| {
+                self.dock.iter_all_tabs().find(|(_,t)| Some(t.endpoint.id()) == selection.as_ref()).ok_or(EndpointError::Disconnected)?.1.endpoint.bridge_port()
+            }).collect();
+            match ports.and_then(|ports| Bridge::start(ports[0].clone(), ports[1].clone())) {
+                Ok(bridge) => { let events = bridge.subscribe(512); self.bridges.push(BridgeView { bridge,events,history:VecDeque::new(),paused:false }); self.error = None; }
+                Err(error) => self.error = Some(error.to_string()),
+            }
+    }
+    pub(super) fn connection_shortcuts(&mut self, ctx: &egui::Context) {
+        let modifiers = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
+        if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::V)) { self.create_pair(); }
+        if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::B)) { self.start_bridge(); }
+        if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::M)) {
+            for view in &mut self.bridges { view.paused = !view.paused; }
+        }
+    }
     pub(super) fn connections_ui(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         ui.heading("Virtual pairs");
         ui.text_edit_singleline(&mut self.pair_name);
         ui.label("Link directory (optional)");
         ui.text_edit_singleline(&mut self.pair_directory);
-        if ui.button("Create PTY pair").clicked() {
-            if self.pairs.iter().any(|p| p.name == self.pair_name) {
-                self.error = Some("A pair with this name already exists".into());
-            } else {
-                let directory = if self.pair_directory.trim().is_empty() { None } else { Some(Path::new(&self.pair_directory)) };
-                match VirtualPair::create(&self.pair_name, directory) {
-                    Ok(pair) => { self.pairs.push(pair); self.error = None; }
-                    Err(error) => self.error = Some(error),
-                }
-            }
-        }
+        if ui.button("Create PTY pair").clicked() { self.create_pair(); }
+        ui.small("Ctrl+Shift+V creates a pair");
         let mut open = None;
         let mut remove = None;
         for (index, pair) in self.pairs.iter().enumerate() {
@@ -61,15 +80,8 @@ impl Workbench {
                     for (id,name) in &endpoints { ui.selectable_value(selection, Some(id.clone()), name); }
                 });
         }
-        if ui.button("Start full-duplex bridge").clicked() {
-            let ports: Result<Vec<_>, _> = [&self.bridge_a, &self.bridge_b].iter().map(|selection| {
-                self.dock.iter_all_tabs().find(|(_,t)| Some(t.endpoint.id()) == selection.as_ref()).ok_or(EndpointError::Disconnected)?.1.endpoint.bridge_port()
-            }).collect();
-            match ports.and_then(|ports| Bridge::start(ports[0].clone(), ports[1].clone())) {
-                Ok(bridge) => { let events = bridge.subscribe(512); self.bridges.push(BridgeView { bridge,events,history:VecDeque::new(),paused:false }); self.error = None; }
-                Err(error) => self.error = Some(error.to_string()),
-            }
-        }
+        if ui.button("Start full-duplex bridge").clicked() { self.start_bridge(); }
+        ui.small("Ctrl+Shift+B starts the selected bridge");
         ui.small("RX on A → TX on B; RX on B → TX on A.");
     }
     pub(super) fn bridge_monitors(&mut self, ctx: &egui::Context) {
@@ -86,7 +98,7 @@ impl Workbench {
                         ui.horizontal(|ui| {
                             ui.strong(format!("Bridge {} ↔ {}", view.bridge.a.0, view.bridge.b.0));
                             ui.label(format!("{:?}", view.bridge.state()));
-                            ui.checkbox(&mut view.paused,"Pause display");
+                            ui.checkbox(&mut view.paused,"Pause display").on_hover_text("Ctrl+Shift+M toggles bridge monitor displays");
                             if ui.button("Stop / remove").clicked() { remove = Some(index); }
                         });
                         let dropped = view.bridge.dropped_events();

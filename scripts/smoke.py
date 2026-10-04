@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import subprocess
 import tempfile
@@ -37,7 +38,9 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
     profile_path = Path(config_dir) / "signal-forge" / "presets.json"
     profile_path.parent.mkdir()
     profile_path.write_text(json.dumps({"version": 1, "profiles": [{"name": "Bench", "presets": presets}]}))
-    process = subprocess.Popen(args, env=dict(os.environ, XDG_CONFIG_HOME=config_dir))
+    log_path = Path(config_dir) / "app.log"
+    app_log = log_path.open("w")
+    process = subprocess.Popen(args, env=dict(os.environ, XDG_CONFIG_HOME=config_dir), stderr=app_log)
     try:
         for index in range(40):
             if process.poll() is not None:
@@ -54,21 +57,55 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+2"], check=True)
         read_bytes(pairs[0][0], bytes([0, 255]) * 3)
         assert not select.select([master for master, _ in pairs], [], [], 0.15)[0]
+        # Create an owned pair through the same action as the UI button.
+        subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+v"], check=True)
+        deadline = time.monotonic() + 3
+        match = None
+        while time.monotonic() < deadline:
+            match = re.search(r"Created PTY pair bench: (\S+) <-> (\S+)", log_path.read_text())
+            if match:
+                break
+            time.sleep(0.05)
+        assert match, log_path.read_text()
+        pair_paths = match.groups()
+        clients = [os.open(path, os.O_RDWR | os.O_NONBLOCK) for path in pair_paths]
+        try:
+            os.write(clients[0], b"owned A\x00\xff")
+            read_bytes(clients[1], b"owned A\x00\xff")
+            os.write(clients[1], b"owned B\r\n")
+            read_bytes(clients[0], b"owned B\r\n")
+        finally:
+            for client in clients:
+                os.close(client)
+        subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+b"], check=True)
+        time.sleep(0.15)
+        os.write(pairs[0][0], b"bridge A -> B\x00\xff")
+        os.write(pairs[1][0], b"bridge B -> A\r\n")
+        read_bytes(pairs[1][0], b"bridge A -> B\x00\xff")
+        read_bytes(pairs[0][0], b"bridge B -> A\r\n")
+        subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+m"], check=True)
+        time.sleep(0.1)
+        os.write(pairs[0][0], b"forward while display paused")
+        read_bytes(pairs[1][0], b"forward while display paused")
+        subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+m"], check=True)
         time.sleep(0.2)
         subprocess.run(["import", "-window", "root", "/tmp/signal-forge-smoke.png"], check=True)
         subprocess.run(["convert", "/tmp/signal-forge-smoke.png", "-resize", "1280x", "-quality", "80", "/tmp/signal-forge-smoke.jpg"], check=True)
-        print("Graphical launch, selected/fixed preset targets, binary repeat, and no-auto-send checks passed.", flush=True)
+        print("Graphical launch, selected/fixed preset targets, binary repeat, owned PTY creation, duplex bridging, paused monitoring, and no-auto-send checks passed.", flush=True)
         if os.environ.get("SIGNAL_FORGE_REVIEW_IMAGE") == "1":
             print("SMOKE_IMAGE_BEGIN", flush=True)
             print(base64.b64encode(Path("/tmp/signal-forge-smoke.jpg").read_bytes()).decode(), flush=True)
             print("SMOKE_IMAGE_END", flush=True)
     finally:
-        process.terminate()
+        subprocess.run(["xdotool", "windowclose", window], check=False) if "window" in locals() else process.terminate()
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+        app_log.close()
+        if "pair_paths" in locals():
+            assert all(not Path(path).exists() for path in pair_paths), "Owned PTYs survived application shutdown"
         for master, slave in pairs:
             os.close(master)
             os.close(slave)
