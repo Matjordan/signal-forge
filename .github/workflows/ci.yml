@@ -13,6 +13,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick xdotool
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - run: cargo fetch --locked
+      - name: Inspect dock API
+        run: |
+          python3 - <<'PYTHON'
+          import pathlib,base64,json
+          root=next(pathlib.Path.home().glob(".cargo/registry/src/*/egui_dock-0.16.*"),None)
+          if root:
+              print("DOCK_SOURCE_BEGIN")
+              print(base64.b64encode(json.dumps({str(p.relative_to(root)):p.read_text() for p in root.rglob("*.rs")}).encode()).decode())
+              print("DOCK_SOURCE_END")
+          PYTHON
       - name: Check Rust formatting
         run: cargo fmt --all --check
       - name: Build desktop application
