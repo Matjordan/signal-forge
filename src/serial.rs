@@ -79,8 +79,16 @@ impl SerialEndpoint {
         let id = EndpointId(format!("serial:{}", settings.path));
         let state = Arc::new(Mutex::new(ConnectionState::Connected));
         let stop = Arc::new(AtomicBool::new(false));
-        let mut reader = port.try_clone().map_err(|e| EndpointError::Io(e.to_string()))?;
-        let writer = Arc::new(SerialWriter { port: Mutex::new(Some(port)), state: state.clone(), stop: stop.clone(), bus: bus.clone(), id: id.clone() });
+        let mut reader = port
+            .try_clone()
+            .map_err(|e| EndpointError::Io(e.to_string()))?;
+        let writer = Arc::new(SerialWriter {
+            port: Mutex::new(Some(port)),
+            state: state.clone(),
+            stop: stop.clone(),
+            bus: bus.clone(),
+            id: id.clone(),
+        });
         let bridge = BridgePort::new(id.clone(), writer.clone());
         let worker_bridge = bridge.clone();
         let worker_writer = writer.clone();
@@ -133,7 +141,8 @@ impl SerialEndpoint {
                             .map(|job| job.time_until_next(Instant::now()))
                             .unwrap_or(Duration::from_millis(20))
                             .clamp(Duration::from_millis(1), Duration::from_millis(20));
-                        reader.set_timeout(timeout)
+                        reader
+                            .set_timeout(timeout)
                             .map_err(|e| EndpointError::Io(e.to_string()))?;
                         match reader.read(&mut buffer) {
                             Ok(0) => return Err(EndpointError::Io("serial device closed".into())),
@@ -160,9 +169,16 @@ impl SerialEndpoint {
                 drop(repeat);
                 let next = match result {
                     Ok(()) => {
-                        let state = worker_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                        if matches!(state, ConnectionState::Fault(_)) { state } else { ConnectionState::Disconnected }
-                    },
+                        let state = worker_state
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .clone();
+                        if matches!(state, ConnectionState::Fault(_)) {
+                            state
+                        } else {
+                            ConnectionState::Disconnected
+                        }
+                    }
                     Err(error) => {
                         log::error!("{}: {error}", worker_id.0);
                         ConnectionState::Fault(error.to_string())
@@ -228,7 +244,9 @@ impl Endpoint for SerialEndpoint {
         Ok(handle)
     }
     fn bridge_port(&self) -> Result<BridgePort, EndpointError> {
-        if self.state() != ConnectionState::Connected { return Err(EndpointError::Disconnected); }
+        if self.state() != ConnectionState::Connected {
+            return Err(EndpointError::Disconnected);
+        }
         Ok(self.bridge.clone())
     }
     fn disconnect(&mut self) {
@@ -285,14 +303,28 @@ struct SerialWriter {
     id: EndpointId,
 }
 impl BridgeWriter for SerialWriter {
-    fn state(&self) -> ConnectionState { self.state.lock().unwrap_or_else(|e| e.into_inner()).clone() }
+    fn state(&self) -> ConnectionState {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
     fn write(&self, bytes: &[u8], cancelled: &AtomicBool) -> Result<bool, EndpointError> {
-        if self.stop.load(Ordering::Acquire) { return Ok(false); }
+        if self.stop.load(Ordering::Acquire) {
+            return Ok(false);
+        }
         let mut port = self.port.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(port) = port.as_mut() else { return Err(EndpointError::Disconnected); };
-        let result = write_payload(&mut **port, bytes, &self.stop, Some(cancelled), &self.bus, &self.id);
+        let Some(port) = port.as_mut() else {
+            return Err(EndpointError::Disconnected);
+        };
+        let result = write_payload(
+            &mut **port,
+            bytes,
+            &self.stop,
+            Some(cancelled),
+            &self.bus,
+            &self.id,
+        );
         if let Err(error) = &result {
-            *self.state.lock().unwrap_or_else(|e| e.into_inner()) = ConnectionState::Fault(error.to_string());
+            *self.state.lock().unwrap_or_else(|e| e.into_inner()) =
+                ConnectionState::Fault(error.to_string());
             self.stop.store(true, Ordering::Release);
         }
         result
@@ -300,5 +332,7 @@ impl BridgeWriter for SerialWriter {
 }
 
 impl SerialWriter {
-    fn close(&self) { self.port.lock().unwrap_or_else(|e| e.into_inner()).take(); }
+    fn close(&self) {
+        self.port.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
 }

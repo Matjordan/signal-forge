@@ -10,33 +10,74 @@ pub(super) struct BridgeView {
 }
 impl Workbench {
     fn create_pair(&mut self) {
-            if self.pairs.iter().any(|p| p.name == self.pair_name) {
-                self.error = Some("A pair with this name already exists".into());
+        if self.pairs.iter().any(|p| p.name == self.pair_name) {
+            self.error = Some("A pair with this name already exists".into());
+        } else {
+            let directory = if self.pair_directory.trim().is_empty() {
+                None
             } else {
-                let directory = if self.pair_directory.trim().is_empty() { None } else { Some(Path::new(&self.pair_directory)) };
-                match VirtualPair::create(&self.pair_name, directory) {
-                    Ok(pair) => { log::info!("Created PTY pair {}: {} <-> {}", pair.name, pair.paths[0], pair.paths[1]); self.pairs.push(pair); self.error = None; }
-                    Err(error) => self.error = Some(error),
+                Some(Path::new(&self.pair_directory))
+            };
+            match VirtualPair::create(&self.pair_name, directory) {
+                Ok(pair) => {
+                    log::info!(
+                        "Created PTY pair {}: {} <-> {}",
+                        pair.name,
+                        pair.paths[0],
+                        pair.paths[1]
+                    );
+                    self.pairs.push(pair);
+                    self.error = None;
                 }
+                Err(error) => self.error = Some(error),
             }
+        }
     }
     fn start_bridge(&mut self) {
-            let ports: Result<Vec<_>, _> = [&self.bridge_a, &self.bridge_b].iter().map(|selection| {
-                self.dock.iter_all_tabs().find(|(_,t)| Some(t.endpoint.id()) == selection.as_ref()).ok_or(EndpointError::Disconnected)?.1.endpoint.bridge_port()
-            }).collect();
-            match ports.and_then(|ports| Bridge::start(ports[0].clone(), ports[1].clone())) {
-                Ok(bridge) => { let events = bridge.subscribe(512); self.bridges.push(BridgeView { bridge,events,history:VecDeque::new(),paused:false }); self.error = None; }
-                Err(error) => self.error = Some(error.to_string()),
+        let ports: Result<Vec<_>, _> = [&self.bridge_a, &self.bridge_b]
+            .iter()
+            .map(|selection| {
+                self.dock
+                    .iter_all_tabs()
+                    .find(|(_, t)| Some(t.endpoint.id()) == selection.as_ref())
+                    .ok_or(EndpointError::Disconnected)?
+                    .1
+                    .endpoint
+                    .bridge_port()
+            })
+            .collect();
+        match ports.and_then(|ports| Bridge::start(ports[0].clone(), ports[1].clone())) {
+            Ok(bridge) => {
+                let events = bridge.subscribe(512);
+                self.bridges.push(BridgeView {
+                    bridge,
+                    events,
+                    history: VecDeque::new(),
+                    paused: false,
+                });
+                self.error = None;
             }
+            Err(error) => self.error = Some(error.to_string()),
+        }
     }
     pub(super) fn connection_shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Q)) { ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
-        if ctx.wants_keyboard_input() { return; }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Q)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if ctx.wants_keyboard_input() {
+            return;
+        }
         let modifiers = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
-        if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::N)) { self.create_pair(); }
-        if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::B)) { self.start_bridge(); }
+        if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::N)) {
+            self.create_pair();
+        }
+        if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::B)) {
+            self.start_bridge();
+        }
         if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::M)) {
-            for view in &mut self.bridges { view.paused = !view.paused; }
+            for view in &mut self.bridges {
+                view.paused = !view.paused;
+            }
         }
     }
     pub(super) fn connections_ui(&mut self, ui: &mut egui::Ui) {
@@ -45,49 +86,96 @@ impl Workbench {
         ui.text_edit_singleline(&mut self.pair_name);
         ui.label("Link directory (optional)");
         ui.text_edit_singleline(&mut self.pair_directory);
-        if ui.button("Create PTY pair").clicked() { self.create_pair(); }
+        if ui.button("Create PTY pair").clicked() {
+            self.create_pair();
+        }
         ui.small("Ctrl+Shift+N creates a pair");
         let mut open = None;
         let mut remove = None;
         for (index, pair) in self.pairs.iter().enumerate() {
             ui.push_id(index, |ui| {
                 ui.label(format!("{} · {:?}", pair.name, pair.state()));
-                for (side,path) in pair.paths.iter().enumerate() {
+                for (side, path) in pair.paths.iter().enumerate() {
                     ui.small(format!("{}: {path}", if side == 0 { "A" } else { "B" }));
                     ui.horizontal(|ui| {
-                        if ui.small_button(format!("Open {}", if side == 0 { "A" } else { "B" })).clicked() { open = Some(path.clone()); }
-                        if ui.small_button("Copy path").clicked() { ui.ctx().copy_text(path.clone()); }
+                        if ui
+                            .small_button(format!("Open {}", if side == 0 { "A" } else { "B" }))
+                            .clicked()
+                        {
+                            open = Some(path.clone());
+                        }
+                        if ui.small_button("Copy path").clicked() {
+                            ui.ctx().copy_text(path.clone());
+                        }
                     });
                 }
-                if ui.small_button("Remove pair").clicked() { remove = Some(index); }
+                if ui.small_button("Remove pair").clicked() {
+                    remove = Some(index);
+                }
             });
         }
-        if let Some(path) = open { self.settings.path = path; self.connect(); }
+        if let Some(path) = open {
+            self.settings.path = path;
+            self.connect();
+        }
         if let Some(index) = remove {
             let pair = &self.pairs[index];
-            for (_,tab) in self.dock.iter_all_tabs_mut() {
-                if pair.paths.iter().chain(&pair.raw_paths).any(|path| path == tab.endpoint.display_name()) { tab.endpoint.disconnect(); }
+            for (_, tab) in self.dock.iter_all_tabs_mut() {
+                if pair
+                    .paths
+                    .iter()
+                    .chain(&pair.raw_paths)
+                    .any(|path| path == tab.endpoint.display_name())
+                {
+                    tab.endpoint.disconnect();
+                }
             }
             self.pairs.remove(index);
         }
         ui.separator();
         ui.heading("Bridges");
-        let endpoints: Vec<_> = self.dock.iter_all_tabs().filter(|(_,t)| t.endpoint.state() == ConnectionState::Connected).map(|(_,t)| (t.endpoint.id().clone(), t.endpoint.display_name().to_owned())).collect();
-        if self.bridge_a.is_none() { self.bridge_a = endpoints.first().map(|e| e.0.clone()); }
-        if self.bridge_b.is_none() { self.bridge_b = endpoints.get(1).map(|e| e.0.clone()); }
+        let endpoints: Vec<_> = self
+            .dock
+            .iter_all_tabs()
+            .filter(|(_, t)| t.endpoint.state() == ConnectionState::Connected)
+            .map(|(_, t)| {
+                (
+                    t.endpoint.id().clone(),
+                    t.endpoint.display_name().to_owned(),
+                )
+            })
+            .collect();
+        if self.bridge_a.is_none() {
+            self.bridge_a = endpoints.first().map(|e| e.0.clone());
+        }
+        if self.bridge_b.is_none() {
+            self.bridge_b = endpoints.get(1).map(|e| e.0.clone());
+        }
         for (label, selection) in [("A", &mut self.bridge_a), ("B", &mut self.bridge_b)] {
             egui::ComboBox::from_id_salt(format!("bridge-{label}"))
-                .selected_text(format!("{label}: {}", selection.as_ref().map(|id| id.0.as_str()).unwrap_or("Select endpoint")))
+                .selected_text(format!(
+                    "{label}: {}",
+                    selection
+                        .as_ref()
+                        .map(|id| id.0.as_str())
+                        .unwrap_or("Select endpoint")
+                ))
                 .show_ui(ui, |ui| {
-                    for (id,name) in &endpoints { ui.selectable_value(selection, Some(id.clone()), name); }
+                    for (id, name) in &endpoints {
+                        ui.selectable_value(selection, Some(id.clone()), name);
+                    }
                 });
         }
-        if ui.button("Start full-duplex bridge").clicked() { self.start_bridge(); }
+        if ui.button("Start full-duplex bridge").clicked() {
+            self.start_bridge();
+        }
         ui.small("Ctrl+Shift+B starts the selected bridge");
         ui.small("RX on A → TX on B; RX on B → TX on A.");
     }
     pub(super) fn bridge_monitors(&mut self, ctx: &egui::Context) {
-        if self.bridges.is_empty() { return; }
+        if self.bridges.is_empty() {
+            return;
+        }
         let mut remove = None;
         egui::TopBottomPanel::bottom("bridge-monitors").resizable(true).default_height(170.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -115,13 +203,17 @@ impl Workbench {
                 }
             });
         });
-        if let Some(index) = remove { self.bridges.remove(index); }
+        if let Some(index) = remove {
+            self.bridges.remove(index);
+        }
     }
 }
 impl Drop for Workbench {
     fn drop(&mut self) {
         self.bridges.clear();
-        for (_,tab) in self.dock.iter_all_tabs_mut() { tab.endpoint.disconnect(); }
+        for (_, tab) in self.dock.iter_all_tabs_mut() {
+            tab.endpoint.disconnect();
+        }
         self.pairs.clear();
     }
 }

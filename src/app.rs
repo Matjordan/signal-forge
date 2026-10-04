@@ -5,7 +5,7 @@ use eframe::egui::{self, Color32, RichText};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use signal_forge::{
     config::{FlowControl, Parity, SerialSettings, WorkspaceConfig},
-    endpoint::{ConnectionState, Endpoint, EndpointId, EndpointError},
+    endpoint::{ConnectionState, Endpoint, EndpointError, EndpointId},
     presets::{Preset, PresetLibrary},
     repeat::{RepeatHandle, RepeatSpec},
     send::{self, Encoding, LineEnding},
@@ -690,37 +690,39 @@ impl eframe::App for Workbench {
             .resizable(true)
             .default_width(240.0)
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().id_salt("connections-sidebar").show(ui, |ui| {
-                ui.heading("Endpoints");
-                if self.ports.is_empty() {
-                    ui.label("No serial devices detected");
-                }
                 egui::ScrollArea::vertical()
-                    .id_salt("device_list")
-                    .max_height(180.0)
+                    .id_salt("connections-sidebar")
                     .show(ui, |ui| {
-                        for path in &self.ports {
-                            if ui
-                                .selectable_label(self.settings.path == *path, path)
-                                .clicked()
-                            {
-                                self.settings = self
-                                    .config
-                                    .ports
-                                    .iter()
-                                    .find(|s| s.path == *path)
-                                    .cloned()
-                                    .unwrap_or_else(|| SerialSettings {
-                                        path: path.clone(),
-                                        ..Default::default()
-                                    });
-                            }
+                        ui.heading("Endpoints");
+                        if self.ports.is_empty() {
+                            ui.label("No serial devices detected");
                         }
+                        egui::ScrollArea::vertical()
+                            .id_salt("device_list")
+                            .max_height(180.0)
+                            .show(ui, |ui| {
+                                for path in &self.ports {
+                                    if ui
+                                        .selectable_label(self.settings.path == *path, path)
+                                        .clicked()
+                                    {
+                                        self.settings = self
+                                            .config
+                                            .ports
+                                            .iter()
+                                            .find(|s| s.path == *path)
+                                            .cloned()
+                                            .unwrap_or_else(|| SerialSettings {
+                                                path: path.clone(),
+                                                ..Default::default()
+                                            });
+                                    }
+                                }
+                            });
+                        ui.separator();
+                        self.settings_ui(ui);
+                        self.connections_ui(ui);
                     });
-                ui.separator();
-                self.settings_ui(ui);
-                self.connections_ui(ui);
-                });
             });
         egui::SidePanel::right("presets")
             .resizable(true)
