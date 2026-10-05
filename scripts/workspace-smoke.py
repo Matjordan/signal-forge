@@ -52,9 +52,10 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
             os.write(pairs[0][0], chunk)
             time.sleep(.05)
         for x in [330, 385, 268, 330]:  # Left: Raw Chunks -> Hex -> Line -> Raw Chunks.
-            subprocess.run(['xdotool', 'mousemove', '--window', window, str(x), '97', 'click', '1'], check=True)
+            # The baud dropdown wraps connection actions onto the next header row.
+            subprocess.run(['xdotool', 'mousemove', '--window', window, str(x), '118', 'click', '1'], check=True)
             time.sleep(.1)
-        subprocess.run(['xdotool', 'mousemove', '--window', window, '840', '97', 'click', '1'], check=True)
+        subprocess.run(['xdotool', 'mousemove', '--window', window, '840', '118', 'click', '1'], check=True)
         time.sleep(.1)
         # Change split ratio with the visible divider, then save via keyboard.
         subprocess.run(['xdotool', 'mousemove', '--window', window, '707', '350', 'mousedown', '1', 'sleep', '0.2', 'mousemove', '--window', window, '640', '350', 'sleep', '0.2', 'mouseup', '1'], check=True)
@@ -66,6 +67,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         assert len(initial['ports']) == 2
         left = initial['layout']['Split']['first']['Leaf']['tabs'][0]
         right = initial['layout']['Split']['second']['Leaf']['tabs'][0]
+        assert left['settings']['baud'] == right['settings']['baud'] == 19200
         assert left['receive_mode'] == 'RawChunks', left
         assert right['receive_mode'] == 'Hex', right
         assert left['delimiter'] == right['delimiter'] == 'Auto'
