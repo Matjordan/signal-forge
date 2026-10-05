@@ -316,7 +316,19 @@ fn repeat_unplug_and_drop_cancel_without_restart() {
 
 #[test]
 fn opening_and_reconnecting_apply_selected_baud() {
-    use nix::sys::termios::{cfgetospeed, BaudRate};
+    fn assert_baud(slave: &std::os::fd::OwnedFd, baud: u32) {
+        let mut settings = std::mem::MaybeUninit::<nix::libc::termios2>::uninit();
+        // Linux serialport uses TCSETS2/BOTHER, whose numeric speeds cannot be
+        // decoded by the legacy termios BaudRate enum. Read them with TCGETS2.
+        let result = unsafe {
+            nix::libc::ioctl(slave.as_raw_fd(), nix::libc::TCGETS2, settings.as_mut_ptr())
+        };
+        assert_eq!(result, 0, "{}", std::io::Error::last_os_error());
+        // A successful TCGETS2 initialized the entire termios2 structure.
+        let settings = unsafe { settings.assume_init() };
+        assert_eq!(settings.c_ispeed, baud);
+        assert_eq!(settings.c_ospeed, baud);
+    }
     let (_master, path, slave) = pty();
     let bus = TrafficBus::default();
     let mut settings = SerialSettings {
@@ -324,10 +336,10 @@ fn opening_and_reconnecting_apply_selected_baud() {
         ..Default::default()
     };
     let mut endpoint = SerialEndpoint::open(&settings, bus.clone()).unwrap();
-    assert_eq!(cfgetospeed(&tcgetattr(&slave).unwrap()), BaudRate::B19200);
+    assert_baud(&slave, 19200);
     endpoint.disconnect();
     settings.baud = 57600;
     let mut endpoint = SerialEndpoint::open(&settings, bus).unwrap();
-    assert_eq!(cfgetospeed(&tcgetattr(&slave).unwrap()), BaudRate::B57600);
+    assert_baud(&slave, 57600);
     endpoint.disconnect();
 }
