@@ -105,19 +105,14 @@ impl TerminalViewer<'_> {
                         }
                     });
                 if previous != tab.lines.delimiter {
-                    tab.lines.clear();
-                    for event in &tab.history {
-                        if tab.rx_breaks.contains(&event.sequence) {
-                            tab.lines.discard_pending();
-                        }
-                        tab.lines.receive(event);
-                    }
+                    tab.rebuild_lines();
                 }
                 ui.checkbox(&mut tab.timestamps, "Timestamps");
                 ui.checkbox(&mut tab.auto_scroll, "Auto-scroll");
                 ui.checkbox(&mut tab.paused, "Pause display");
                 if ui.button("Clear").clicked() {
                     tab.history.clear();
+                    tab.history_framing.clear();
                     tab.lines.clear();
                     tab.rx_breaks.clear();
                     tab.rx_gap = false;
@@ -163,6 +158,9 @@ impl TerminalViewer<'_> {
                         tab.endpoint.disconnect();
                         match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
                             Ok(endpoint) => {
+                                tab.active_framing = SerialFraming::from(&tab.settings);
+                                tab.rx_gap = true;
+                                tab.lines.discard_pending();
                                 tab.endpoint = Box::new(endpoint);
                                 tab.error = None;
                             }
@@ -302,7 +300,12 @@ impl TerminalViewer<'_> {
                 ..Default::default()
             },
         );
-        ui.add(egui::Label::new(text).wrap_mode(egui::TextWrapMode::Extend));
+        let response = ui.add(egui::Label::new(text).wrap_mode(egui::TextWrapMode::Extend));
+        if tab.receive_mode == ReceiveMode::Line {
+            if let Some(timing) = tab.lines.row(index).and_then(|row| row.timing.as_ref()) {
+                response.on_hover_text(timing.tooltip());
+            }
+        }
     }
 
     pub(super) fn tool_strip(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
@@ -474,6 +477,134 @@ impl TerminalViewer<'_> {
     pub(super) fn status_footer(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         if let Some(error) = &tab.error {
             ui.colored_label(theme::ERROR, format!("{}: {error}", tab.settings.path));
+        }
+    }
+}
+
+#[cfg(test)]
+mod timing_hover_tests {
+    use super::*;
+
+    fn rendered_text(shapes: &[egui::epaint::ClippedShape]) -> String {
+        fn append(shape: &egui::epaint::Shape, text: &mut String) {
+            match shape {
+                egui::epaint::Shape::Text(shape) => {
+                    text.push_str(shape.galley.text());
+                    text.push('\n');
+                }
+                egui::epaint::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        append(shape, text);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut text = String::new();
+        for shape in shapes {
+            append(&shape.shape, &mut text);
+        }
+        text
+    }
+    #[test]
+    fn timing_is_hover_only_and_only_on_rx_line_rows() {
+        let mut tab = Terminal::restored(&signal_forge::workspace::SavedTerminal {
+            settings: SerialSettings {
+                path: "/dev/test".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        tab.receive(Arc::new(TrafficEvent {
+            sequence: 1,
+            timestamp: UNIX_EPOCH,
+            endpoint: tab.endpoint.id().clone(),
+            direction: Direction::Rx,
+            bytes: Arc::from(b"HELLO\n".as_slice()),
+        }));
+        let ctx = egui::Context::default();
+        ctx.style_mut(|style| style.interaction.tooltip_delay = 0.0);
+        let render = |time, position| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 400.0),
+                    )),
+                    time: Some(time),
+                    events: vec![egui::Event::PointerMoved(position)],
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        TerminalViewer::traffic_row(ui, &tab, 0);
+                    });
+                },
+            )
+        };
+        let normal = render(0.0, egui::pos2(400.0, 300.0));
+        assert!(rendered_text(&normal.shapes).contains("HELLO"));
+        assert!(!rendered_text(&normal.shapes).contains("Observed RX span"));
+        // Egui resolves hover from the preceding frame's widget rectangles.
+        let _ = render(1.0, egui::pos2(20.0, 15.0));
+        let hover = render(2.0, egui::pos2(20.0, 15.0));
+        let text = rendered_text(&hover.shapes);
+        assert!(
+            text.contains("Observed RX span: 0.0 ms / single read"),
+            "{text}"
+        );
+        assert!(text.contains("Calculated wire time: 3.1 ms"), "{text}");
+        assert!(text.contains("19200 baud · 8N1"), "{text}");
+        tab.receive(Arc::new(TrafficEvent {
+            sequence: 2,
+            timestamp: UNIX_EPOCH,
+            endpoint: tab.endpoint.id().clone(),
+            direction: Direction::Tx,
+            bytes: Arc::from(b"request".as_slice()),
+        }));
+        // Reuse the hovered location for a TX row: it must have no RX tooltip.
+        for time in [2.1, 2.2] {
+            let output = ctx.run(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        TerminalViewer::traffic_row(ui, &tab, 1);
+                    });
+                },
+            );
+            assert!(!rendered_text(&output.shapes).contains("Observed RX span"));
+        }
+        for (index, mode) in [ReceiveMode::RawChunks, ReceiveMode::Hex]
+            .into_iter()
+            .enumerate()
+        {
+            tab.receive_mode = mode;
+            let _ = ctx.run(
+                egui::RawInput {
+                    time: Some(3.0 + index as f64 * 2.0),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        TerminalViewer::traffic_row(ui, &tab, 0);
+                    });
+                },
+            );
+            let output = ctx.run(
+                egui::RawInput {
+                    time: Some(4.0 + index as f64 * 2.0),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        TerminalViewer::traffic_row(ui, &tab, 0);
+                    });
+                },
+            );
+            assert!(!rendered_text(&output.shapes).contains("Observed RX span"));
         }
     }
 }
