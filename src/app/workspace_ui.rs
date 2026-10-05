@@ -244,14 +244,18 @@ impl Workbench {
                     .find(|(_, tab)| tab.endpoint.id() == id)
                 {
                     if tab.endpoint.state() != ConnectionState::Connected {
-                        tab.stop_repeat();
-                        tab.endpoint.disconnect();
-                        match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
-                            Ok(endpoint) => {
-                                tab.endpoint = Box::new(endpoint);
-                                tab.error = None;
+                        if let Err(error) = tab.baud_control.validate() {
+                            tab.error = Some(error.into());
+                        } else {
+                            tab.stop_repeat();
+                            tab.endpoint.disconnect();
+                            match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
+                                Ok(endpoint) => {
+                                    tab.endpoint = Box::new(endpoint);
+                                    tab.error = None;
+                                }
+                                Err(error) => tab.error = Some(error.to_string()),
                             }
-                            Err(error) => tab.error = Some(error.to_string()),
                         }
                     }
                 }

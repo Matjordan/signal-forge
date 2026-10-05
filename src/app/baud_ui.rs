@@ -41,7 +41,7 @@ impl BaudControl {
         }
         ui.label("Baud");
         egui::ComboBox::from_id_salt("baud")
-            .width(125.0)
+            .width(75.0)
             .selected_text(if self.custom {
                 match Self::parse(&self.text) {
                     Ok(value) => format!("{value} (custom)"),
