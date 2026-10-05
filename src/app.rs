@@ -19,7 +19,7 @@ use signal_forge::{
     send::{self, Encoding, LineEnding},
     send_history::{SendEntry, SendHistory},
     serial::{self, SerialEndpoint},
-    terminal_display::{self, LineDelimiter, LineDisplay, ReceiveMode},
+    terminal_display::{self, LineDelimiter, LineDisplay, ReceiveMode, SerialFraming},
     traffic::{self, Direction, TrafficBus, TrafficEvent},
 };
 use std::{
@@ -37,6 +37,8 @@ struct Terminal {
     show_settings: bool,
     tool: terminal_ui::TerminalTool,
     history: VecDeque<Arc<TrafficEvent>>,
+    history_framing: VecDeque<SerialFraming>,
+    active_framing: SerialFraming,
     rx_gap: bool,
     rx_breaks: std::collections::HashSet<u64>,
     paused: bool,
@@ -64,8 +66,10 @@ impl Terminal {
             baud_control: BaudControl::new(settings.baud),
             show_settings: false,
             tool: terminal_ui::TerminalTool::Send,
+            active_framing: SerialFraming::from(&settings),
             settings,
             history: VecDeque::new(),
+            history_framing: VecDeque::new(),
             rx_gap: false,
             rx_breaks: std::collections::HashSet::new(),
             paused: false,
@@ -104,13 +108,24 @@ impl Terminal {
             self.rx_breaks.insert(event.sequence);
             self.rx_gap = false;
         }
-        self.lines.receive(&event);
+        self.lines.receive_with_framing(&event, self.active_framing);
         if self.history.len() == HISTORY_LIMIT {
+            self.history_framing.pop_front();
             if let Some(old) = self.history.pop_front() {
                 self.rx_breaks.remove(&old.sequence);
             }
         }
+        self.history_framing.push_back(self.active_framing);
         self.history.push_back(event);
+    }
+    fn rebuild_lines(&mut self) {
+        self.lines.clear();
+        for (event, framing) in self.history.iter().zip(&self.history_framing) {
+            if self.rx_breaks.contains(&event.sequence) {
+                self.lines.discard_pending();
+            }
+            self.lines.receive_with_framing(event, *framing);
+        }
     }
     fn send(&mut self) {
         self.error = match send::encode(&self.input, self.encoding, self.escapes, self.ending) {

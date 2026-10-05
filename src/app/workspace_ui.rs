@@ -41,7 +41,7 @@ impl Terminal {
             ending: self.ending,
         }
     }
-    fn restored(saved: &SavedTerminal) -> Self {
+    pub(super) fn restored(saved: &SavedTerminal) -> Self {
         let endpoint = RestoredEndpoint {
             id: EndpointId(format!("serial:{}", saved.settings.path)),
             path: saved.settings.path.clone(),
@@ -263,6 +263,9 @@ impl Workbench {
                             tab.endpoint.disconnect();
                             match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
                                 Ok(endpoint) => {
+                                    tab.active_framing = SerialFraming::from(&tab.settings);
+                                    tab.rx_gap = true;
+                                    tab.lines.discard_pending();
                                     tab.endpoint = Box::new(endpoint);
                                     tab.error = None;
                                 }
@@ -417,6 +420,82 @@ mod receive_display_tests {
             }
         }
         assert_eq!(Terminal::restored(&saved()).receive_mode, ReceiveMode::Line);
+    }
+    #[test]
+    fn timing_replay_retains_receipt_settings_and_history_bounds() {
+        let mut tab = Terminal::restored(&saved());
+        let original = tab.active_framing;
+        for sequence in 0..HISTORY_LIMIT as u64 + 3 {
+            tab.receive(Arc::new(TrafficEvent {
+                sequence,
+                timestamp: UNIX_EPOCH + Duration::from_millis(sequence),
+                endpoint: tab.endpoint.id().clone(),
+                direction: Direction::Rx,
+                bytes: Arc::from(b"A\r\n".as_slice()),
+            }));
+        }
+        tab.settings.baud = 9600;
+        tab.settings.parity = Parity::Even;
+        tab.settings.stop_bits = 2;
+        assert_eq!(tab.history.len(), HISTORY_LIMIT);
+        assert_eq!(tab.history_framing.len(), HISTORY_LIMIT);
+        tab.lines.delimiter = LineDelimiter::CrLf;
+        tab.rebuild_lines();
+        for row in &tab.lines.rows {
+            let timing = row.timing.as_ref().unwrap();
+            assert_eq!(timing.framing, original);
+            assert_eq!(timing.byte_count, 3);
+            assert_eq!(timing.read_count, 1);
+            assert!((timing.calculated_wire_seconds().unwrap() - 30.0 / 19200.0).abs() < 1e-12);
+        }
+        let raw = tab.history.back().unwrap().clone();
+        assert_eq!(raw.bytes.as_ref(), b"A\r\n");
+        assert_eq!(
+            tab.lines
+                .rows
+                .back()
+                .unwrap()
+                .timing
+                .as_ref()
+                .unwrap()
+                .last_timestamp,
+            raw.timestamp
+        );
+    }
+    #[test]
+    fn replay_preserves_framing_changes_and_pause_gaps() {
+        let mut tab = Terminal::restored(&saved());
+        let event = |sequence, bytes: &[u8]| {
+            Arc::new(TrafficEvent {
+                sequence,
+                timestamp: UNIX_EPOCH + Duration::from_millis(sequence),
+                endpoint: EndpointId("serial:/dev/test".into()),
+                direction: Direction::Rx,
+                bytes: Arc::from(bytes),
+            })
+        };
+        tab.receive(event(1, b"OLD\npartial"));
+        tab.paused = true;
+        tab.receive(event(2, b"hidden"));
+        tab.paused = false;
+        tab.settings.baud = 9600;
+        tab.settings.parity = Parity::Even;
+        tab.settings.stop_bits = 2;
+        tab.active_framing = SerialFraming::from(&tab.settings);
+        tab.receive(event(3, b"NEW\n"));
+        tab.rebuild_lines();
+        assert_eq!(tab.lines.rows.len(), 2);
+        assert_eq!(tab.lines.rows[0].bytes, b"OLD");
+        assert_eq!(tab.lines.rows[1].bytes, b"NEW");
+        let old = tab.lines.rows[0].timing.as_ref().unwrap();
+        let new = tab.lines.rows[1].timing.as_ref().unwrap();
+        assert_eq!(old.framing.baud, 19200);
+        assert_eq!(new.framing.baud, 9600);
+        assert_eq!(new.byte_count, 4);
+        assert_eq!(new.read_count, 1);
+        assert_eq!(new.first_timestamp, UNIX_EPOCH + Duration::from_millis(3));
+        assert!((new.calculated_wire_seconds().unwrap() - 48.0 / 9600.0).abs() < 1e-12);
+        assert_eq!(tab.history_framing.len(), tab.history.len());
     }
     #[test]
     fn modes_and_delimiters_persist_and_legacy_hex_settings_migrate() {
