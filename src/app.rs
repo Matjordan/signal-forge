@@ -212,14 +212,20 @@ impl TabViewer for TerminalViewer<'_> {
         ui.separator();
         self.traffic_canvas(ui, tab);
         ui.separator();
-        self.tool_strip(ui, tab);
-        self.send_panel(ui, tab);
-        match tab.tool {
-            terminal_ui::TerminalTool::Send => {}
-            terminal_ui::TerminalTool::Repeat => self.repeat_panel(ui, tab),
-            terminal_ui::TerminalTool::Presets => self.preset_panel(ui, tab),
-        }
-        self.status_footer(ui, tab);
+        egui::ScrollArea::vertical()
+            .id_salt(("terminal-tools", tab.endpoint.id().0.clone()))
+            .max_height(ui.available_height().max(30.0))
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                self.tool_strip(ui, tab);
+                self.send_panel(ui, tab);
+                match tab.tool {
+                    terminal_ui::TerminalTool::Send => {}
+                    terminal_ui::TerminalTool::Repeat => self.repeat_panel(ui, tab),
+                    terminal_ui::TerminalTool::Presets => self.preset_panel(ui, tab),
+                }
+                self.status_footer(ui, tab);
+            });
     }
     fn on_close(&mut self, tab: &mut Terminal) -> bool {
         self.known_ports
