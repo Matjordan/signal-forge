@@ -275,6 +275,7 @@ impl Workbench {
         initial_ports: Vec<String>,
         update_enabled: bool,
         restart: update_ui::RestartRequest,
+        update_failure: Option<String>,
     ) -> Self {
         theme::apply(&cc.egui_ctx);
         let (config, mut error, config_recoverable) = match WorkspaceConfig::load() {
@@ -292,7 +293,7 @@ impl Workbench {
         let bus = TrafficBus::default();
         let traffic = bus.subscribe(4096);
         let mut app = Self {
-            updater: update_ui::UpdateController::new(update_enabled, restart),
+            updater: update_ui::UpdateController::new(update_enabled, restart, update_failure),
             setup: None,
             preset_library_open: false,
             active_bridge: 0,

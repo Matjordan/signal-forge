@@ -25,10 +25,13 @@ pub(super) struct UpdateController {
     prepared: Option<PreparedUpdate>,
 }
 impl UpdateController {
-    pub fn new(enabled: bool, restart: RestartRequest) -> Self {
+    pub fn new(enabled: bool, restart: RestartRequest, failure: Option<String>) -> Self {
+        let should_check = enabled && failure.is_none();
         let (sender, receiver) = mpsc::channel();
         let controller = Self {
-            state: if enabled {
+            state: if let Some(error) = failure {
+                UpdateState::Failed(error)
+            } else if enabled {
                 UpdateState::Checking
             } else {
                 UpdateState::Quiet
@@ -38,7 +41,7 @@ impl UpdateController {
             restart,
             prepared: None,
         };
-        if enabled {
+        if should_check {
             let tx = controller.sender.clone();
             std::thread::spawn(move || {
                 let _ = tx.send(Event::Checked(updater::check()));
@@ -181,8 +184,19 @@ impl Workbench {
 mod tests {
     use super::*;
     #[test]
+    fn restored_app_shows_restart_failure_without_offering_the_failed_update_again() {
+        let controller = UpdateController::new(
+            true,
+            Arc::new(Mutex::new(None)),
+            Some("Restored previous version after startup failed".into()),
+        );
+        assert!(matches!(controller.state, UpdateState::Failed(_)));
+        assert!(controller.receiver.try_recv().is_err());
+        assert!(controller.restart.lock().unwrap().is_none());
+    }
+    #[test]
     fn quiet_and_deferred_states_cannot_approve_or_download() {
-        let mut controller = UpdateController::new(false, Arc::new(Mutex::new(None)));
+        let mut controller = UpdateController::new(false, Arc::new(Mutex::new(None)), None);
         controller.approve();
         assert!(matches!(controller.state, UpdateState::Quiet));
         controller.state = UpdateState::Deferred;
@@ -192,7 +206,7 @@ mod tests {
     }
     #[test]
     fn newer_release_is_offered_once_and_not_now_never_downloads() {
-        let mut controller = UpdateController::new(false, Arc::new(Mutex::new(None)));
+        let mut controller = UpdateController::new(false, Arc::new(Mutex::new(None)), None);
         controller.state = UpdateState::Checking;
         let offer = Offer {
             version: semver::Version::new(1, 0, 0),
@@ -226,7 +240,7 @@ mod tests {
     }
     #[test]
     fn checked_current_or_offline_stays_quiet_and_prepare_failure_allows_continue() {
-        let mut controller = UpdateController::new(false, Arc::new(Mutex::new(None)));
+        let mut controller = UpdateController::new(false, Arc::new(Mutex::new(None)), None);
         controller.sender.send(Event::Checked(Ok(None))).unwrap();
         controller.poll();
         assert!(matches!(controller.state, UpdateState::Quiet));

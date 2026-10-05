@@ -431,13 +431,19 @@ impl InstalledUpdate {
             return Ok(());
         };
         self.rollback()?;
+        let message = format!("{error}. Restored and restarted the previous version.");
         Command::new(&self.target)
+            .env("SIGNAL_FORGE_UPDATE_FAILURE", &message)
             .spawn()
             .map_err(|e| format!("Previous executable restored but relaunch failed: {e}"))?;
-        Err(format!(
-            "{error}. Restored and restarted the previous version."
-        ))
+        Err(message)
     }
+}
+/// Carry a rollback error into the restored app so desktop launches show it visibly.
+pub fn take_restart_failure() -> Option<String> {
+    let message = std::env::var("SIGNAL_FORGE_UPDATE_FAILURE").ok()?;
+    std::env::remove_var("SIGNAL_FORGE_UPDATE_FAILURE");
+    Some(message.chars().take(4096).collect())
 }
 /// Called at launch before GUI threads start. The socket is supplied only by our updater.
 pub fn take_restart_signal() -> Option<std::os::unix::net::UnixStream> {

@@ -130,7 +130,8 @@ locations report an error and keep the current app usable; the updater never req
 Installation uses an atomic rename with a synced recovery copy named
 `.signal-forge-previous-*` beside the executable. Failed downloads, verification, or
 replacement keep the old installation. The new process must confirm that its workbench is initialized at the expected
-version within 15 seconds; failure restores and relaunches the previous binary. The recovery copy remains after a successful restart;
+version within 15 seconds; failure restores and relaunches the previous binary with
+a visible error and a Continue action. The recovery copy remains after a successful restart;
 once satisfied with the new release, remove that copy, or use it for manual rollback.
 Workspaces, presets, captures, and configuration files are not replaced. Normal shutdown
 saves the workspace and finishes I/O cleanup before the new process starts. Launch

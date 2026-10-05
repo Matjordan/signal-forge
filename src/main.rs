@@ -29,6 +29,7 @@ fn main() -> eframe::Result<()> {
             }
         }
     }
+    let update_failure = signal_forge::updater::take_restart_failure();
     let ready_signal = signal_forge::updater::take_restart_signal();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -42,7 +43,13 @@ fn main() -> eframe::Result<()> {
         "Signal Forge",
         options,
         Box::new(move |cc| {
-            let workbench = app::Workbench::new(cc, initial_ports, update_enabled, restart_for_app);
+            let workbench = app::Workbench::new(
+                cc,
+                initial_ports,
+                update_enabled,
+                restart_for_app,
+                update_failure,
+            );
             signal_forge::updater::signal_workbench_ready(ready_signal);
             Ok(Box::new(workbench))
         }),
