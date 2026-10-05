@@ -374,7 +374,16 @@ impl Workbench {
                                 ui.add_sized(
                                     [52.0, 18.0],
                                     egui::Label::new(
-                                        RichText::new(row.direction.label()).color(direction_color),
+                                        RichText::new(
+                                            if row.direction
+                                                == signal_forge::inspector::BridgeDirection::AToB
+                                            {
+                                                "A > B"
+                                            } else {
+                                                "B > A"
+                                            },
+                                        )
+                                        .color(direction_color),
                                     ),
                                 );
                                 ui.add_sized(

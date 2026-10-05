@@ -423,6 +423,8 @@ impl Workbench {
                         tab.endpoint.disconnect();
                     }
                     self.pairs.clear();
+                    self.dock = DockState::new(Vec::new());
+                    self.selected = None;
                     self.config = config;
                     self.restore_workspace();
                     self.config_recoverable = true;
