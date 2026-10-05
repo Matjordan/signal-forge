@@ -154,7 +154,7 @@ impl Workbench {
                         Progress::Installing => { ui.label("Installing update"); }
                         Progress::Restarting => { ui.label("Restarting Signal Forge"); }
                     }
-                    ui.weak("Closing before installation keeps the current executable.");
+                    ui.weak("Your workspace is saved and devices are released before restart.");
                 }
                 UpdateState::Failed(error) => {
                     ui.colored_label(theme::ERROR, "Update failed"); ui.label(error);

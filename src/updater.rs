@@ -227,7 +227,12 @@ pub fn prepare(
     progress(Progress::Verifying);
     verify_digest(&expected, &format!("{:x}", digest.finalize()))?;
     let archive_file = archive.reopen().map_err(|e| e.to_string())?;
-    let binary = extract_binary(archive_file, parent, &offer.version)?.into_temp_path();
+    let binary = extract_binary(archive_file, parent, &offer.version)?;
+    binary
+        .as_file()
+        .set_permissions(metadata.permissions())
+        .map_err(|e| e.to_string())?;
+    let binary = binary.into_temp_path();
     validate_binary(&binary, &offer.version)?;
     Ok(PreparedUpdate { binary, target })
 }
@@ -454,6 +459,25 @@ mod tests {
         r.assets[1].browser_download_url =
             r.assets[1].browser_download_url.replace("https:", "http:");
         assert!(select_release(vec![r], &Version::new(0, 1, 0), "linux", "x86_64").is_none());
+    }
+    #[test]
+    fn read_only_executable_is_rejected_before_any_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("signal-forge");
+        fs::write(&target, b"existing executable").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o555)).unwrap();
+        let offer = select_release(
+            vec![release("1.0.0")],
+            &Version::new(0, 1, 0),
+            "linux",
+            "x86_64",
+        )
+        .unwrap();
+        let error = prepare(&offer, &target, |_| panic!("Download must not start"))
+            .err()
+            .unwrap();
+        assert!(error.contains("cannot safely self-update"));
+        assert_eq!(fs::read(&target).unwrap(), b"existing executable");
     }
     #[test]
     fn checksums_require_exact_filename_and_matching_bytes() {
