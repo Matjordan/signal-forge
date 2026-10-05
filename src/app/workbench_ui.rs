@@ -206,7 +206,7 @@ impl Workbench {
                                 if ui
                                     .selectable_label(
                                         self.selected.as_ref() == Some(id),
-                                        RichText::new(format!("●  {path}")).color(color),
+                                        RichText::new(format!("{path}")).color(color),
                                     )
                                     .clicked()
                                 {

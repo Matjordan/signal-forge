@@ -140,9 +140,9 @@ impl TerminalViewer<'_> {
         ui.horizontal_wrapped(|ui| {
             let connected = tab.endpoint.state() == ConnectionState::Connected;
             let (state, color) = match tab.endpoint.state() {
-                ConnectionState::Connected => ("● Connected", theme::CONNECTED),
-                ConnectionState::Disconnected => ("● Disconnected", theme::MUTED),
-                ConnectionState::Fault(_) => ("● Fault", theme::ERROR),
+                ConnectionState::Connected => ("Connected", theme::CONNECTED),
+                ConnectionState::Disconnected => ("Disconnected", theme::MUTED),
+                ConnectionState::Fault(_) => ("Fault", theme::ERROR),
             };
             ui.colored_label(color, state).on_hover_text(format!("{:?}", tab.endpoint.state()));
             ui.label(RichText::new(workbench_ui::framing(&tab.settings)).small().color(theme::MUTED));
@@ -284,7 +284,7 @@ impl TerminalViewer<'_> {
             ui.selectable_value(
                 &mut tab.tool,
                 TerminalTool::Repeat,
-                if active { "Repeat ●" } else { "Repeat" },
+                if active { "Repeat (active)" } else { "Repeat" },
             );
             ui.selectable_value(&mut tab.tool, TerminalTool::Presets, "Presets");
             if active && ui.add(theme::danger_button("Stop")).clicked() {

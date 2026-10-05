@@ -70,7 +70,7 @@ impl Workbench {
             }
             Err(error) => {
                 self.error = Some(format!(
-                    "Bridge {} ↔ {}: {error}",
+                    "Bridge {} <-> {}: {error}",
                     self.bridge_a
                         .as_ref()
                         .map(|id| id.0.as_str())
@@ -166,7 +166,7 @@ impl Workbench {
                 .selectable_label(
                     self.active_bridge == index,
                     format!(
-                        "{} ↔ {}",
+                        "{} <-> {}",
                         view.bridge.a.0.trim_start_matches("serial:"),
                         view.bridge.b.0.trim_start_matches("serial:")
                     ),
@@ -218,7 +218,7 @@ impl Workbench {
                                     &mut self.active_bridge,
                                     index,
                                     format!(
-                                        "{} ↔ {}",
+                                        "{} <-> {}",
                                         view.bridge.a.0.trim_start_matches("serial:"),
                                         view.bridge.b.0.trim_start_matches("serial:")
                                     ),
@@ -227,7 +227,7 @@ impl Workbench {
                         });
                     let view = &self.bridges[self.active_bridge];
                     ui.label(format!(
-                        "{} ↔ {}",
+                        "{} <-> {}",
                         view.bridge.a.0.trim_start_matches("serial:"),
                         view.bridge.b.0.trim_start_matches("serial:")
                     ));
@@ -246,8 +246,8 @@ impl Workbench {
                 let view = &mut self.bridges[self.active_bridge];
                 ui.horizontal_wrapped(|ui| {
                     ui.selectable_value(&mut view.inspector.filter, DirectionFilter::Both, "Both");
-                    ui.selectable_value(&mut view.inspector.filter, DirectionFilter::AToB, "A → B");
-                    ui.selectable_value(&mut view.inspector.filter, DirectionFilter::BToA, "B → A");
+                    ui.selectable_value(&mut view.inspector.filter, DirectionFilter::AToB, "A > B");
+                    ui.selectable_value(&mut view.inspector.filter, DirectionFilter::BToA, "B > A");
                     ui.checkbox(&mut view.inspector.deltas, "Delta");
                     ui.checkbox(&mut view.inspector.paused, "Pause")
                         .on_hover_text("Forwarding and capture continue");
