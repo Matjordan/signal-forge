@@ -221,13 +221,6 @@ impl Workbench {
             return;
         }
         if !ctx.wants_keyboard_input() {
-            for (key, grid) in [(egui::Key::Num2, false), (egui::Key::Num4, true)] {
-                if ctx
-                    .input_mut(|i| i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::ALT, key))
-                {
-                    self.arrange_tiles(grid);
-                }
-            }
             if ctx.input_mut(|i| {
                 i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::S)
             }) {

@@ -94,7 +94,6 @@ A slow subscriber loses monitoring events instead of blocking a serial worker. S
 | Enter / Up / Down in payload | Send / recall older / return toward draft |
 | Ctrl+L | Focus the selected terminal payload (outside text editing) |
 | Ctrl+O | Open new-port setup (outside text editing) |
-| Ctrl+Alt+2 / 4 | Arrange live terminals into two/four tiles (outside text editing) |
 | Ctrl+Shift+S | Open workspace save/load setup (outside text editing) |
 | Ctrl+Shift+O | Reconnect selected disconnected terminal |
 | Ctrl+Shift+D | Disconnect selected terminal and stop its repeat/bridge |

@@ -56,7 +56,8 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-ui-') as directory:
                 os.write(master, f'Device {index + 1}: ready at 19200\r\n'.encode())
             command('mousemove', '--window', window, '400', '200', 'click', '1')
             time.sleep(.2)
-            key('ctrl+alt+4')
+            command('mousemove', '--window', window, '627', '14', 'click', '1')
+            time.sleep(.3)
             initial = snapshot(config)
             assert leaf_count(initial['layout']) == 4, initial
             paths = {s['path'] for s in initial['ports']}
@@ -90,7 +91,8 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-ui-') as directory:
                 assert snapshot(config) == before, shortcut
             assert 'Created PTY pair' not in log_path.read_text(), 'Cancel created a pair'
             assert log_path.read_text().count('Opened ') == 4, 'Cancel reopened a device'
-            key('ctrl+alt+2')
+            command('mousemove', '--window', window, '575', '14', 'click', '1')
+            time.sleep(.3)
             tiled = snapshot(config)
             assert leaf_count(tiled['layout']) == 2
             assert {s['path'] for s in tiled['ports']} == paths
