@@ -27,7 +27,7 @@ jobs:
       - name: Unit and PTY integration tests
         run: cargo test --locked --all-targets
       - name: Graphical launch and real endpoint byte flow
-        run: xvfb-run -a -s "-screen 0 1440x900x24 -noreset" sh -c 'python3 scripts/smoke.py && python3 scripts/workspace-smoke.py'
+        run: xvfb-run -a -s "-screen 0 2560x1440x24 -noreset" sh -c 'python3 scripts/smoke.py && python3 scripts/workspace-smoke.py && python3 scripts/ui-smoke.py'
       - name: Upload graphical smoke screenshot
         if: always()
         uses: actions/upload-artifact@v4
@@ -36,6 +36,9 @@ jobs:
           path: |
             /tmp/signal-forge-smoke.png
             /tmp/workspace-failure.png
+            /tmp/signal-forge-four-tiles.png
+            /tmp/signal-forge-minimum.png
+            /tmp/signal-forge-1440p.png
       - name: Build Linux release package
         run: bash scripts/package-linux.sh
       - name: Verify archive and local installation

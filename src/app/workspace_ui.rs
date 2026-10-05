@@ -217,6 +217,30 @@ impl Workbench {
         }
     }
     pub(super) fn workspace_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.setup.is_some() {
+            return;
+        }
+        if !ctx.wants_keyboard_input() {
+            for (key, grid) in [(egui::Key::Num2, false), (egui::Key::Num4, true)] {
+                if ctx
+                    .input_mut(|i| i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::ALT, key))
+                {
+                    self.arrange_tiles(grid);
+                }
+            }
+            if ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::S)
+            }) {
+                self.open_setup(workbench_ui::SetupKind::Workspace);
+                return;
+            }
+        }
+        if !ctx.wants_keyboard_input()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::O))
+        {
+            self.open_setup(workbench_ui::SetupKind::Port);
+            return;
+        }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::S)) {
             self.save_workspace();
         }

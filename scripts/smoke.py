@@ -65,8 +65,9 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
             time.sleep(0.06)
 
         def payload(x, text):
-            # Fixed 1440x900 smoke viewport, before a bridge panel is opened.
-            subprocess.run(["xdotool", "mousemove", "--window", window, str(x), "713", "click", "1"], check=True)
+            # Select the pane, then focus its stable payload ID independently of layout.
+            subprocess.run(["xdotool", "mousemove", "--window", window, str(x), "200", "click", "1"], check=True)
+            key("ctrl+l")
             key("ctrl+a")
             subprocess.run(["xdotool", "type", "--window", window, "--clearmodifiers", "--delay", "5", text], check=True)
 
@@ -115,6 +116,8 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
         assert not select.select([master for master, _ in pairs], [], [], 0.1)[0]
         # Create an owned pair through the same action as the UI button.
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+n"], check=True)
+        time.sleep(.2)
+        key("ctrl+Return")
         deadline = time.monotonic() + 3
         match = None
         while time.monotonic() < deadline:
@@ -134,6 +137,8 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
             for client in clients:
                 os.close(client)
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+b"], check=True)
+        time.sleep(.2)
+        key("ctrl+Return")
         time.sleep(0.15)
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+shift+r"], check=True)
         deadline = time.monotonic() + 3
@@ -176,7 +181,7 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
             assert actual == expected, (actual, expected)
         assert all(int(line["timestamp_unix_ns"]) > 0 for line in traffic)
         time.sleep(0.2)
-        subprocess.run(["import", "-window", "root", "/tmp/signal-forge-smoke.png"], check=True)
+        subprocess.run(["import", "-window", window, "/tmp/signal-forge-smoke.png"], check=True)
         subprocess.run(["convert", "/tmp/signal-forge-smoke.png", "-resize", "1280x", "-quality", "80", "/tmp/signal-forge-smoke.jpg"], check=True)
         print("Graphical launch, selected/fixed preset targets, binary repeat, owned PTY creation, duplex bridging, paused monitoring, JSONL capture export, Enter sends, per-terminal Up/Down recall, and no-auto-send checks passed.", flush=True)
         if os.environ.get("SIGNAL_FORGE_REVIEW_IMAGE") == "1":

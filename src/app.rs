@@ -5,6 +5,7 @@ mod connection_ui;
 mod preset_ui;
 mod terminal_ui;
 mod theme;
+mod workbench_ui;
 mod workspace_ui;
 
 use eframe::egui::{self, RichText};
@@ -32,6 +33,8 @@ struct Terminal {
     endpoint: Box<dyn Endpoint>,
     settings: SerialSettings,
     baud_control: BaudControl,
+    show_settings: bool,
+    tool: terminal_ui::TerminalTool,
     history: VecDeque<Arc<TrafficEvent>>,
     rx_gap: bool,
     rx_breaks: std::collections::HashSet<u64>,
@@ -58,6 +61,8 @@ impl Terminal {
         Self {
             endpoint: Box::new(endpoint),
             baud_control: BaudControl::new(settings.baud),
+            show_settings: false,
+            tool: terminal_ui::TerminalTool::Send,
             settings,
             history: VecDeque::new(),
             rx_gap: false,
@@ -181,6 +186,9 @@ struct TerminalViewer<'a> {
     bus: &'a TrafficBus,
     selected: &'a mut Option<EndpointId>,
     known_ports: &'a mut Vec<SerialSettings>,
+    presets: &'a [Preset],
+    preset_request: &'a mut Option<(EndpointId, Preset)>,
+    preset_library_open: &'a mut bool,
 }
 impl TabViewer for TerminalViewer<'_> {
     type Tab = Terminal;
@@ -196,14 +204,21 @@ impl TabViewer for TerminalViewer<'_> {
     }
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         self.selection(ui, tab);
-        self.serial_settings(ui, tab);
-        self.display_controls(ui, tab);
         self.connection_status(ui, tab);
+        if tab.show_settings {
+            self.serial_settings(ui, tab);
+        }
+        self.display_controls(ui, tab);
         ui.separator();
         self.traffic_canvas(ui, tab);
         ui.separator();
+        self.tool_strip(ui, tab);
         self.send_panel(ui, tab);
-        self.repeat_panel(ui, tab);
+        match tab.tool {
+            terminal_ui::TerminalTool::Send => {}
+            terminal_ui::TerminalTool::Repeat => self.repeat_panel(ui, tab),
+            terminal_ui::TerminalTool::Presets => self.preset_panel(ui, tab),
+        }
         self.status_footer(ui, tab);
     }
     fn on_close(&mut self, tab: &mut Terminal) -> bool {
@@ -217,6 +232,9 @@ impl TabViewer for TerminalViewer<'_> {
 }
 
 pub struct Workbench {
+    setup: Option<workbench_ui::SetupDialog>,
+    preset_library_open: bool,
+    active_bridge: usize,
     pairs: Vec<signal_forge::virtual_pair::VirtualPair>,
     pair_name: String,
     pair_directory: String,
@@ -261,6 +279,9 @@ impl Workbench {
         let bus = TrafficBus::default();
         let traffic = bus.subscribe(4096);
         let mut app = Self {
+            setup: None,
+            preset_library_open: false,
+            active_bridge: 0,
             pairs: Vec::new(),
             pair_name: "bench".into(),
             pair_directory: String::new(),
@@ -357,71 +378,6 @@ impl Workbench {
             Err(error) => self.error = Some(format!("{}: {error}", self.settings.path)),
         }
     }
-    fn settings_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Serial settings");
-        ui.label("Device path");
-        ui.text_edit_singleline(&mut self.settings.path);
-        ui.small("Physical device or an existing /dev/pts/N path");
-        ui.horizontal_wrapped(|ui| {
-            self.baud_control.ui(ui, &mut self.settings.baud);
-        });
-        egui::ComboBox::from_id_salt("bits")
-            .selected_text(format!("{} data bits", self.settings.data_bits))
-            .show_ui(ui, |ui| {
-                for value in 5..=8 {
-                    ui.selectable_value(&mut self.settings.data_bits, value, value.to_string());
-                }
-            });
-        egui::ComboBox::from_id_salt("parity")
-            .selected_text(format!("Parity: {:?}", self.settings.parity))
-            .show_ui(ui, |ui| {
-                for value in [Parity::None, Parity::Odd, Parity::Even] {
-                    ui.selectable_value(&mut self.settings.parity, value, format!("{value:?}"));
-                }
-            });
-        egui::ComboBox::from_id_salt("stop")
-            .selected_text(format!("{} stop bits", self.settings.stop_bits))
-            .show_ui(ui, |ui| {
-                for value in 1..=2 {
-                    ui.selectable_value(&mut self.settings.stop_bits, value, value.to_string());
-                }
-            });
-        egui::ComboBox::from_id_salt("flow")
-            .selected_text(format!("Flow: {:?}", self.settings.flow))
-            .show_ui(ui, |ui| {
-                for value in [
-                    FlowControl::None,
-                    FlowControl::Hardware,
-                    FlowControl::Software,
-                ] {
-                    ui.selectable_value(&mut self.settings.flow, value, format!("{value:?}"));
-                }
-            });
-        if ui
-            .add_enabled(
-                !self.settings.path.is_empty(),
-                theme::primary_button("Open / reconnect terminal"),
-            )
-            .clicked()
-        {
-            self.connect();
-        }
-        ui.separator();
-        ui.heading("Recent devices");
-        for saved in &self.config.ports {
-            if ui
-                .selectable_label(saved.path == self.settings.path, &saved.path)
-                .clicked()
-            {
-                self.settings = saved.clone();
-                self.baud_control = BaudControl::new(self.settings.baud);
-            }
-        }
-        ui.separator();
-        ui.small(
-            "Drag tabs to arrange terminals side-by-side. Open devices have independent settings.",
-        );
-    }
 }
 impl eframe::App for Workbench {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -436,28 +392,7 @@ impl eframe::App for Workbench {
             }
         }
         ctx.request_repaint_after(Duration::from_millis(33));
-        egui::TopBottomPanel::top("header").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("Signal Forge")
-                        .strong()
-                        .size(22.0)
-                        .color(theme::ACCENT),
-                );
-                ui.label("Serial Workbench");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_enabled(self.config_recoverable, egui::Button::new("Save workspace"))
-                        .clicked()
-                    {
-                        self.save_workspace();
-                    }
-                    if ui.button("Refresh devices").clicked() {
-                        self.refresh();
-                    }
-                });
-            });
-        });
+        self.toolbar_ui(ctx);
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let connected = self
@@ -485,56 +420,16 @@ impl eframe::App for Workbench {
                 }
             }
         });
-        egui::SidePanel::left("devices")
-            .resizable(true)
-            .default_width(240.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("connections-sidebar")
-                    .show(ui, |ui| {
-                        ui.heading("Endpoints");
-                        if self.ports.is_empty() {
-                            ui.label("No serial devices detected");
-                        }
-                        egui::ScrollArea::vertical()
-                            .id_salt("device_list")
-                            .max_height(180.0)
-                            .show(ui, |ui| {
-                                for path in &self.ports {
-                                    if ui
-                                        .selectable_label(self.settings.path == *path, path)
-                                        .clicked()
-                                    {
-                                        self.settings = self
-                                            .config
-                                            .ports
-                                            .iter()
-                                            .find(|s| s.path == *path)
-                                            .cloned()
-                                            .unwrap_or_else(|| SerialSettings {
-                                                path: path.clone(),
-                                                ..Default::default()
-                                            });
-                                        self.baud_control = BaudControl::new(self.settings.baud);
-                                    }
-                                }
-                            });
-                        ui.separator();
-                        self.settings_ui(ui);
-                        self.connections_ui(ui);
-                    });
-            });
-        egui::SidePanel::right("presets")
-            .resizable(true)
-            .default_width(270.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.presets_ui(ui));
-            });
+        self.workbench_sidebar(ctx);
         self.preset_editor(ctx);
-        self.preset_shortcuts(ctx);
+        if self.setup.is_none() {
+            self.preset_shortcuts(ctx);
+        }
         self.connection_shortcuts(ctx);
         self.workspace_shortcuts(ctx);
         self.bridge_monitors(ctx);
+        let presets = self.library.profiles[self.profile_index].presets.clone();
+        let mut preset_request = None;
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(&ctx.style()).fill(theme::BACKGROUND))
             .show(ctx, |ui| {
@@ -542,7 +437,8 @@ impl eframe::App for Workbench {
                     ui.vertical_centered(|ui| {
                         ui.add_space(100.0);
                         ui.label(RichText::new("Your serial workspace").size(28.0).strong());
-                        ui.label("Choose a device, set its parameters, and open a terminal.");
+                        ui.label("Use + New Port to configure a serial device, or Virtual Pair to create linked endpoints.");
+                        if ui.add(theme::primary_button("+ Open a port")).clicked() { self.open_setup(workbench_ui::SetupKind::Port); }
                         ui.label("Open a second device to start with two panes side-by-side.");
                         ui.add_space(16.0);
                         ui.colored_label(
@@ -557,9 +453,18 @@ impl eframe::App for Workbench {
                             bus: &self.bus,
                             selected: &mut self.selected,
                             known_ports: &mut self.config.ports,
+                            presets: &presets,
+                            preset_request: &mut preset_request,
+                            preset_library_open: &mut self.preset_library_open,
                         },
                     );
                 }
             });
+        if let Some((id, preset)) = preset_request {
+            self.selected = Some(id);
+            self.dispatch_preset(preset);
+        }
+        self.preset_library_ui(ctx);
+        self.setup_dialog_ui(ctx);
     }
 }

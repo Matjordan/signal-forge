@@ -1,6 +1,13 @@
 //! Terminal presentation sections; transport actions remain on the existing endpoints.
 use super::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum TerminalTool {
+    Send,
+    Repeat,
+    Presets,
+}
+
 impl TerminalViewer<'_> {
     pub(super) fn selection(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|input| input.pointer.any_pressed())
@@ -68,6 +75,76 @@ impl TerminalViewer<'_> {
                             }
                         });
                 });
+            });
+        });
+    }
+
+    pub(super) fn display_controls(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Line, "Line");
+            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::RawChunks, "Raw Chunks");
+            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Hex, "Hex");
+            ui.menu_button("Display…", |ui| {
+                let previous = tab.lines.delimiter;
+                egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "receive-delimiter"))
+                    .width(55.0)
+                    .selected_text(match tab.lines.delimiter {
+                        LineDelimiter::Auto => "Auto",
+                        LineDelimiter::Lf => "LF",
+                        LineDelimiter::CrLf => "CRLF",
+                        LineDelimiter::Cr => "CR",
+                    })
+                    .show_ui(ui, |ui| {
+                        for (value, label) in [
+                            (LineDelimiter::Auto, "Auto"),
+                            (LineDelimiter::Lf, "LF"),
+                            (LineDelimiter::CrLf, "CRLF"),
+                            (LineDelimiter::Cr, "CR"),
+                        ] {
+                            ui.selectable_value(&mut tab.lines.delimiter, value, label);
+                        }
+                    });
+                if previous != tab.lines.delimiter {
+                    tab.lines.clear();
+                    for event in &tab.history {
+                        if tab.rx_breaks.contains(&event.sequence) {
+                            tab.lines.discard_pending();
+                        }
+                        tab.lines.receive(event);
+                    }
+                }
+                ui.checkbox(&mut tab.timestamps, "Timestamps");
+                ui.checkbox(&mut tab.auto_scroll, "Auto-scroll");
+                ui.checkbox(&mut tab.paused, "Pause display");
+                if ui.button("Clear").clicked() {
+                    tab.history.clear();
+                    tab.lines.clear();
+                    tab.rx_breaks.clear();
+                    tab.rx_gap = false;
+                }
+            });
+            if tab.paused {
+                ui.colored_label(theme::WARNING, "Paused");
+            }
+            ui.label(
+                RichText::new(format!("RX {} B · TX {} B", tab.rx_bytes, tab.tx_bytes))
+                    .small()
+                    .color(theme::MUTED),
+            );
+        });
+    }
+
+    pub(super) fn connection_status(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        ui.horizontal_wrapped(|ui| {
+            let connected = tab.endpoint.state() == ConnectionState::Connected;
+            let (state, color) = match tab.endpoint.state() {
+                ConnectionState::Connected => ("● Connected", theme::CONNECTED),
+                ConnectionState::Disconnected => ("● Disconnected", theme::MUTED),
+                ConnectionState::Fault(_) => ("● Fault", theme::ERROR),
+            };
+            ui.colored_label(color, state).on_hover_text(format!("{:?}", tab.endpoint.state()));
+            ui.label(RichText::new(workbench_ui::framing(&tab.settings)).small().color(theme::MUTED));
+            if ui.selectable_label(tab.show_settings, "Settings").clicked() { tab.show_settings = !tab.show_settings; }
                 if ui
                     .add(
                         theme::primary_button(if connected { "Disconnect" } else { "Reconnect" }),
@@ -91,86 +168,16 @@ impl TerminalViewer<'_> {
                         }
                     }
                 }
-            });
         });
-    }
-
-    pub(super) fn display_controls(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Line, "Line");
-            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::RawChunks, "Raw Chunks");
-            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Hex, "Hex");
-            let previous = tab.lines.delimiter;
-            egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "receive-delimiter"))
-                .width(55.0)
-                .selected_text(match tab.lines.delimiter {
-                    LineDelimiter::Auto => "Auto",
-                    LineDelimiter::Lf => "LF",
-                    LineDelimiter::CrLf => "CRLF",
-                    LineDelimiter::Cr => "CR",
-                })
-                .show_ui(ui, |ui| {
-                    for (value, label) in [
-                        (LineDelimiter::Auto, "Auto"),
-                        (LineDelimiter::Lf, "LF"),
-                        (LineDelimiter::CrLf, "CRLF"),
-                        (LineDelimiter::Cr, "CR"),
-                    ] {
-                        ui.selectable_value(&mut tab.lines.delimiter, value, label);
-                    }
-                });
-            if previous != tab.lines.delimiter {
-                tab.lines.clear();
-                for event in &tab.history {
-                    if tab.rx_breaks.contains(&event.sequence) {
-                        tab.lines.discard_pending();
-                    }
-                    tab.lines.receive(event);
-                }
-            }
-            ui.checkbox(&mut tab.timestamps, "Timestamps");
-            ui.checkbox(&mut tab.auto_scroll, "Auto-scroll");
-            ui.checkbox(&mut tab.paused, "Pause display");
-            if ui.button("Clear").clicked() {
-                tab.history.clear();
-                tab.lines.clear();
-                tab.rx_breaks.clear();
-                tab.rx_gap = false;
-            }
-        });
-    }
-
-    pub(super) fn connection_status(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
-        match tab.endpoint.state() {
-            ConnectionState::Connected => {
-                ui.label(
-                    RichText::new(format!(
-                        "Connected  ·  RX {} B  ·  TX {} B",
-                        tab.rx_bytes, tab.tx_bytes
-                    ))
-                    .color(theme::CONNECTED),
-                );
-            }
-            ConnectionState::Disconnected => {
-                ui.colored_label(
-                    theme::WARNING,
-                    "Disconnected — adjust settings above and reconnect",
-                );
-            }
-            ConnectionState::Fault(error) => {
-                ui.colored_label(
-                    theme::ERROR,
-                    format!("{}: {error}", tab.endpoint.display_name()),
-                );
-            }
-        }
-        if tab.paused {
-            ui.label("Display paused; new rows are discarded while serial I/O continues.");
-        }
     }
 
     pub(super) fn traffic_canvas(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
-        let terminal_height = (ui.available_height() - theme::SEND_AREA_HEIGHT).max(80.0);
+        let extra = match tab.tool {
+            TerminalTool::Send => 0.0,
+            TerminalTool::Repeat => 64.0,
+            TerminalTool::Presets => 80.0,
+        };
+        let terminal_height = (ui.available_height() - theme::SEND_AREA_HEIGHT - extra).max(40.0);
         theme::canvas_frame().show(ui, |ui| {
             egui::ScrollArea::both()
                 .id_salt((tab.endpoint.id().0.clone(), "traffic"))
@@ -268,28 +275,49 @@ impl TerminalViewer<'_> {
         );
     }
 
-    pub(super) fn send_panel(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut tab.encoding, Encoding::Text, "Text");
-            ui.selectable_value(&mut tab.encoding, Encoding::Hex, "Hex bytes");
-            ui.add_enabled(
-                tab.encoding == Encoding::Text,
-                egui::Checkbox::new(&mut tab.escapes, "Interpret escapes"),
+    pub(super) fn tool_strip(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut tab.tool, TerminalTool::Send, "Send");
+            let active = tab.repeat.as_ref().is_some_and(|handle| handle.is_active());
+            ui.selectable_value(
+                &mut tab.tool,
+                TerminalTool::Repeat,
+                if active { "Repeat ●" } else { "Repeat" },
             );
+            ui.selectable_value(&mut tab.tool, TerminalTool::Presets, "Presets");
+            if active && ui.add(theme::danger_button("Stop")).clicked() {
+                tab.stop_repeat();
+            }
         });
-        ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "ending"))
-                .selected_text(format!("Ending: {:?}", tab.ending))
-                .show_ui(ui, |ui| {
-                    for (value, label) in [
-                        (LineEnding::None, "None"),
-                        (LineEnding::Cr, "CR"),
-                        (LineEnding::Lf, "LF"),
-                        (LineEnding::CrLf, "CRLF"),
-                    ] {
-                        ui.selectable_value(&mut tab.ending, value, label);
+    }
+    pub(super) fn preset_panel(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        egui::ScrollArea::vertical()
+            .id_salt((tab.endpoint.id().0.clone(), "terminal-presets"))
+            .max_height(65.0)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for preset in self.presets {
+                        if ui
+                            .button(&preset.name)
+                            .on_hover_text(format!("{}\n{}", preset.description, preset.shortcut))
+                            .clicked()
+                        {
+                            *self.preset_request =
+                                Some((tab.endpoint.id().clone(), preset.clone()));
+                        }
+                    }
+                    if self.presets.is_empty() {
+                        ui.weak("No presets in this profile");
+                    }
+                    if ui.small_button("Manage…").clicked() {
+                        *self.preset_library_open = true;
                     }
                 });
+            });
+    }
+
+    pub(super) fn send_panel(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        ui.horizontal(|ui| {
             // A global endpoint-based ID stays stable as virtualized traffic rows
             // are added above this editor or its terminal is moved in the dock.
             let input_id = egui::Id::new(("terminal-payload", tab.endpoint.id().0.clone()));
@@ -309,7 +337,7 @@ impl TerminalViewer<'_> {
             let input = ui.add(
                 egui::TextEdit::singleline(&mut tab.input)
                     .id(input_id)
-                    .desired_width((ui.available_width() - 70.0).max(100.0))
+                    .desired_width((ui.available_width() - 60.0).max(60.0))
                     .hint_text("Payload · Enter sends · Up recalls"),
             );
             // Process text events before recall so a draft includes every character
@@ -333,6 +361,26 @@ impl TerminalViewer<'_> {
             if clicked || (enter && focused) {
                 tab.send();
             }
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut tab.encoding, Encoding::Text, "Text");
+            ui.selectable_value(&mut tab.encoding, Encoding::Hex, "Hex bytes");
+            egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "ending"))
+                .selected_text(format!("Ending: {:?}", tab.ending))
+                .show_ui(ui, |ui| {
+                    for (value, label) in [
+                        (LineEnding::None, "None"),
+                        (LineEnding::Cr, "CR"),
+                        (LineEnding::Lf, "LF"),
+                        (LineEnding::CrLf, "CRLF"),
+                    ] {
+                        ui.selectable_value(&mut tab.ending, value, label);
+                    }
+                });
+            ui.add_enabled(
+                tab.encoding == Encoding::Text,
+                egui::Checkbox::new(&mut tab.escapes, "Interpret escapes"),
+            );
         });
     }
 
@@ -397,8 +445,5 @@ impl TerminalViewer<'_> {
         if let Some(error) = &tab.error {
             ui.colored_label(theme::ERROR, format!("{}: {error}", tab.settings.path));
         }
-        ui.small(
-            "Enter sends · Up cycles previous messages · Down returns to draft · History is per terminal.",
-        );
     }
 }

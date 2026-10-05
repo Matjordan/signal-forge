@@ -23,7 +23,7 @@ impl Workbench {
             Err(error) => self.error = Some(format!("Presets: {error}")),
         }
     }
-    fn dispatch_preset(&mut self, preset: Preset) {
+    pub(super) fn dispatch_preset(&mut self, preset: Preset) {
         let id = match &preset.target {
             PresetTarget::Selected => self.selected.clone(),
             PresetTarget::Endpoint(id) => Some(EndpointId(id.clone())),

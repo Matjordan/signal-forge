@@ -7,7 +7,7 @@ use signal_forge::{
 use std::path::Path;
 
 pub(super) struct BridgeView {
-    bridge: Bridge,
+    pub(super) bridge: Bridge,
     events: Receiver<Arc<TrafficEvent>>,
     inspector: Inspector,
     capture_path: String,
@@ -15,7 +15,7 @@ pub(super) struct BridgeView {
     capture_error: Option<String>,
 }
 impl Workbench {
-    fn create_pair(&mut self) {
+    pub(super) fn create_pair(&mut self) {
         if self.pairs.iter().any(|p| p.name == self.pair_name) {
             self.error = Some(format!("PTY pair {} already exists", self.pair_name));
         } else {
@@ -39,7 +39,7 @@ impl Workbench {
             }
         }
     }
-    fn start_bridge(&mut self) {
+    pub(super) fn start_bridge(&mut self) {
         let ports: Result<Vec<_>, _> = [&self.bridge_a, &self.bridge_b]
             .iter()
             .map(|selection| {
@@ -87,15 +87,15 @@ impl Workbench {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Q)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        if ctx.wants_keyboard_input() {
+        if self.setup.is_some() || ctx.wants_keyboard_input() {
             return;
         }
         let modifiers = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
         if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::N)) {
-            self.create_pair();
+            self.open_setup(workbench_ui::SetupKind::Pair);
         }
         if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::B)) {
-            self.start_bridge();
+            self.open_setup(workbench_ui::SetupKind::Bridge);
         }
         if ctx.input_mut(|i| i.consume_key(modifiers, egui::Key::R)) {
             if let Some(view) = self.bridges.first_mut() {
@@ -111,13 +111,9 @@ impl Workbench {
     pub(super) fn connections_ui(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         ui.heading("Virtual pairs");
-        ui.text_edit_singleline(&mut self.pair_name);
-        ui.label("Link directory (optional)");
-        ui.text_edit_singleline(&mut self.pair_directory);
-        if ui.button("Create PTY pair").clicked() {
-            self.create_pair();
+        if ui.small_button("+ Virtual pair").clicked() {
+            self.open_setup(workbench_ui::SetupKind::Pair);
         }
-        ui.small("Ctrl+Shift+N creates a pair");
         let mut open = None;
         let mut remove = None;
         for (index, pair) in self.pairs.iter().enumerate() {
@@ -162,108 +158,265 @@ impl Workbench {
         }
         ui.separator();
         ui.heading("Bridges");
-        let endpoints: Vec<_> = self
-            .dock
-            .iter_all_tabs()
-            .filter(|(_, t)| t.endpoint.state() == ConnectionState::Connected)
-            .map(|(_, t)| {
-                (
-                    t.endpoint.id().clone(),
-                    t.endpoint.display_name().to_owned(),
+        if ui.small_button("+ Bridge").clicked() {
+            self.open_setup(workbench_ui::SetupKind::Bridge);
+        }
+        for (index, view) in self.bridges.iter().enumerate() {
+            if ui
+                .selectable_label(
+                    self.active_bridge == index,
+                    format!(
+                        "{} ↔ {}",
+                        view.bridge.a.0.trim_start_matches("serial:"),
+                        view.bridge.b.0.trim_start_matches("serial:")
+                    ),
                 )
-            })
-            .collect();
-        if self.bridge_a.is_none() {
-            self.bridge_a = endpoints.first().map(|e| e.0.clone());
+                .clicked()
+            {
+                self.active_bridge = index;
+            }
+            ui.label(
+                RichText::new(format!("{:?}", view.bridge.state()))
+                    .small()
+                    .color(theme::MUTED),
+            );
         }
-        if self.bridge_b.is_none() {
-            self.bridge_b = endpoints.get(1).map(|e| e.0.clone());
+        if self.bridges.is_empty() {
+            ui.weak("No bridges running");
         }
-        for (label, selection) in [("A", &mut self.bridge_a), ("B", &mut self.bridge_b)] {
-            egui::ComboBox::from_id_salt(format!("bridge-{label}"))
-                .selected_text(format!(
-                    "{label}: {}",
-                    selection
-                        .as_ref()
-                        .map(|id| id.0.as_str())
-                        .unwrap_or("Select endpoint")
-                ))
-                .show_ui(ui, |ui| {
-                    for (id, name) in &endpoints {
-                        ui.selectable_value(selection, Some(id.clone()), name);
-                    }
-                });
-        }
-        if ui.button("Start full-duplex bridge").clicked() {
-            self.start_bridge();
-        }
-        ui.small("Ctrl+Shift+B starts the selected bridge");
-        ui.small("RX on A → TX on B; RX on B → TX on A.");
     }
+
     pub(super) fn bridge_monitors(&mut self, ctx: &egui::Context) {
         if self.bridges.is_empty() {
             return;
         }
-        let mut remove = None;
-        egui::TopBottomPanel::bottom("bridge-monitors").resizable(true).min_height(170.0).default_height(280.0).show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for (index, view) in self.bridges.iter_mut().enumerate() {
-                    for event in view.events.try_iter().take(2048) { view.inspector.receive(event, &view.bridge.a); }
-                    if view.bridge.state() != signal_forge::bridge::BridgeState::Running {
-                        if let Some(capture) = &view.capture { capture.request_stop(); }
-                    }
-                    ui.push_id(index, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.strong(format!("Bridge {} ↔ {}", view.bridge.a.0, view.bridge.b.0));
-                            ui.label(format!("{:?}", view.bridge.state()));
-                            if ui.button("Stop / remove").clicked() { remove = Some(index); }
-                        });
-                        ui.horizontal_wrapped(|ui| {
-                            ui.selectable_value(&mut view.inspector.filter, DirectionFilter::Both, "Both directions");
-                            ui.selectable_value(&mut view.inspector.filter, DirectionFilter::AToB, "A → B");
-                            ui.selectable_value(&mut view.inspector.filter, DirectionFilter::BToA, "B → A");
-                            ui.checkbox(&mut view.inspector.deltas, "Delta times");
-                            ui.checkbox(&mut view.inspector.paused, "Pause display").on_hover_text("Capture and forwarding continue. Ctrl+Shift+M toggles all bridge displays.");
-                            ui.checkbox(&mut view.inspector.auto_scroll, "Auto-scroll");
-                            if ui.button("Clear display").clicked() { view.inspector.clear(); }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Capture file");
-                            let recording = view.capture.as_ref().is_some_and(|c| matches!(c.status().state, CaptureState::Recording | CaptureState::Finishing));
-                            ui.add_enabled(!recording, egui::TextEdit::singleline(&mut view.capture_path).desired_width(240.0));
-                            let finishing = view.capture.as_ref().is_some_and(|c| c.status().state == CaptureState::Finishing);
-                            if ui.add_enabled(!finishing, egui::Button::new(if recording { "Stop capture" } else { "Start capture" })).clicked() { view.toggle_capture(); }
-                        });
-                        if let Some(capture) = &view.capture {
-                            let status = capture.status();
-                            ui.small(format!("Capture {:?} · {} chunks · {} bytes · {} dropped", status.state, status.events, status.bytes, status.dropped));
-                            if status.dropped > 0 { ui.colored_label(theme::WARNING, "Capture is incomplete: its queue dropped events."); }
-                        } else { ui.small("JSON Lines · both directions · independent of filters/pause · Ctrl+Shift+R toggles first bridge capture"); }
-                        if let Some(error) = &view.capture_error { ui.colored_label(theme::ERROR, error); }
-                        let dropped = view.bridge.dropped_events();
-                        if dropped > 0 { ui.colored_label(theme::WARNING,format!("{dropped} monitor events dropped; forwarding remains independent")); }
-                        let rows: Vec<_> = view.inspector.rows.iter().filter(|row| view.inspector.filter.accepts(row.direction)).collect();
-                        let row_height = ui.text_style_height(&egui::TextStyle::Monospace) * 3.0 + ui.spacing().item_spacing.y * 2.0;
-                        egui::ScrollArea::both().id_salt("bridge-traffic").max_height(150.0).auto_shrink([false,false]).stick_to_bottom(view.inspector.auto_scroll).show_rows(ui, row_height, rows.len(), |ui, range| {
-                            for index in range {
-                                let row = rows[index];
-                                let event = &row.event;
-                                let delta = if view.inspector.deltas { row.delta_ns.map(|ns| format!("  Δ {:+.3} ms", ns as f64 / 1_000_000.0)).unwrap_or_else(|| "  Δ —".into()) } else { String::new() };
-                                let gap = if row.missed_before > 0 { format!("  GAP: {} chunks", row.missed_before) } else { String::new() };
-                                for line in [format!("#{:06}  {}  {}{delta}{gap}", event.sequence, timestamp_utc(event.timestamp), row.direction.label()), format!("ASCII  {}", traffic::ascii(&event.bytes)), format!("HEX    {}", traffic::hex(&event.bytes))] {
-                                    ui.add(egui::Label::new(RichText::new(line).monospace()).wrap_mode(egui::TextWrapMode::Extend));
-                                }
+        // Drain every bridge even when another inspector tab is selected.
+        for view in &mut self.bridges {
+            for event in view.events.try_iter().take(2048) {
+                view.inspector.receive(event, &view.bridge.a);
+            }
+            if view.bridge.state() != signal_forge::bridge::BridgeState::Running {
+                if let Some(capture) = &view.capture {
+                    capture.request_stop();
+                }
+            }
+        }
+        self.active_bridge = self.active_bridge.min(self.bridges.len() - 1);
+        let mut remove = false;
+        egui::TopBottomPanel::bottom("bridge-monitors")
+            .resizable(true)
+            .min_height(120.0)
+            .default_height(220.0)
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong("Traffic inspector");
+                    egui::ComboBox::from_id_salt("inspector-bridge")
+                        .selected_text(format!("Bridge {}", self.active_bridge + 1))
+                        .show_ui(ui, |ui| {
+                            for (index, view) in self.bridges.iter().enumerate() {
+                                ui.selectable_value(
+                                    &mut self.active_bridge,
+                                    index,
+                                    format!(
+                                        "{} ↔ {}",
+                                        view.bridge.a.0.trim_start_matches("serial:"),
+                                        view.bridge.b.0.trim_start_matches("serial:")
+                                    ),
+                                );
                             }
                         });
+                    let view = &self.bridges[self.active_bridge];
+                    ui.label(format!(
+                        "{} ↔ {}",
+                        view.bridge.a.0.trim_start_matches("serial:"),
+                        view.bridge.b.0.trim_start_matches("serial:")
+                    ));
+                    ui.colored_label(
+                        if view.bridge.state() == signal_forge::bridge::BridgeState::Running {
+                            theme::CONNECTED
+                        } else {
+                            theme::ERROR
+                        },
+                        format!("{:?}", view.bridge.state()),
+                    );
+                    if ui.add(theme::danger_button("Stop / remove")).clicked() {
+                        remove = true;
+                    }
+                });
+                let view = &mut self.bridges[self.active_bridge];
+                ui.horizontal_wrapped(|ui| {
+                    ui.selectable_value(&mut view.inspector.filter, DirectionFilter::Both, "Both");
+                    ui.selectable_value(&mut view.inspector.filter, DirectionFilter::AToB, "A → B");
+                    ui.selectable_value(&mut view.inspector.filter, DirectionFilter::BToA, "B → A");
+                    ui.checkbox(&mut view.inspector.deltas, "Delta");
+                    ui.checkbox(&mut view.inspector.paused, "Pause")
+                        .on_hover_text("Forwarding and capture continue");
+                    ui.checkbox(&mut view.inspector.auto_scroll, "Autoscroll");
+                    if ui.button("Clear").clicked() {
+                        view.inspector.clear();
+                    }
+                    let recording = view.capture.as_ref().is_some_and(|c| {
+                        matches!(
+                            c.status().state,
+                            CaptureState::Recording | CaptureState::Finishing
+                        )
                     });
+                    ui.menu_button("Capture file…", |ui| {
+                        ui.add_enabled(
+                            !recording,
+                            egui::TextEdit::singleline(&mut view.capture_path).desired_width(280.0),
+                        );
+                        ui.weak("JSON Lines · both directions · independent of display");
+                    });
+                    let finishing = view
+                        .capture
+                        .as_ref()
+                        .is_some_and(|c| c.status().state == CaptureState::Finishing);
+                    if ui
+                        .add_enabled(
+                            !finishing,
+                            theme::primary_button(if recording {
+                                "Stop capture"
+                            } else {
+                                "Record"
+                            }),
+                        )
+                        .clicked()
+                    {
+                        view.toggle_capture();
+                    }
+                    if let Some(capture) = &view.capture {
+                        let status = capture.status();
+                        ui.label(
+                            RichText::new(format!(
+                                "{:?} · {} B · {} dropped",
+                                status.state, status.bytes, status.dropped
+                            ))
+                            .small()
+                            .color(if status.dropped > 0 {
+                                theme::WARNING
+                            } else {
+                                theme::MUTED
+                            }),
+                        );
+                    }
+                });
+                if let Some(error) = &view.capture_error {
+                    ui.colored_label(theme::ERROR, error);
                 }
+                if view.bridge.dropped_events() > 0 {
+                    ui.colored_label(
+                        theme::WARNING,
+                        format!(
+                            "{} monitor chunks dropped; forwarding continues",
+                            view.bridge.dropped_events()
+                        ),
+                    );
+                }
+                let delta_width = if view.inspector.deltas { 70.0 } else { 0.0 };
+                let payload_width = ((ui.available_width() - 210.0 - delta_width) / 2.0).max(100.0);
+                ui.horizontal(|ui| {
+                    for (label, width) in
+                        [("Time (UTC)", 85.0), ("Direction", 52.0), ("Bytes", 40.0)]
+                    {
+                        ui.add_sized(
+                            [width, 18.0],
+                            egui::Label::new(RichText::new(label).color(theme::MUTED)),
+                        );
+                    }
+                    if view.inspector.deltas {
+                        ui.add_sized([delta_width, 18.0], egui::Label::new("Delta (ms)"));
+                    }
+                    for label in ["ASCII", "Hex"] {
+                        ui.add_sized(
+                            [payload_width, 18.0],
+                            egui::Label::new(RichText::new(label).color(theme::MUTED)),
+                        );
+                    }
+                });
+                ui.separator();
+                let rows: Vec<_> = view
+                    .inspector
+                    .rows
+                    .iter()
+                    .filter(|row| view.inspector.filter.accepts(row.direction))
+                    .collect();
+                egui::ScrollArea::both()
+                    .id_salt(("bridge-traffic", self.active_bridge))
+                    .auto_shrink([false, false])
+                    .stick_to_bottom(view.inspector.auto_scroll)
+                    .max_height(ui.available_height())
+                    .show_rows(ui, theme::TRAFFIC_ROW_HEIGHT, rows.len(), |ui, range| {
+                        for index in range {
+                            let row = rows[index];
+                            let time = timestamp_utc(row.event.timestamp);
+                            let direction_color = if row.direction
+                                == signal_forge::inspector::BridgeDirection::AToB
+                            {
+                                theme::TX
+                            } else {
+                                theme::RX
+                            };
+                            ui.horizontal(|ui| {
+                                ui.add_sized(
+                                    [85.0, 18.0],
+                                    egui::Label::new(
+                                        RichText::new(&time[11..23])
+                                            .monospace()
+                                            .color(theme::MUTED),
+                                    )
+                                    .truncate(),
+                                )
+                                .on_hover_text(format!(
+                                    "{} · chunk #{} · {} missed chunks",
+                                    time, row.event.sequence, row.missed_before
+                                ));
+                                ui.add_sized(
+                                    [52.0, 18.0],
+                                    egui::Label::new(
+                                        RichText::new(row.direction.label()).color(direction_color),
+                                    ),
+                                );
+                                ui.add_sized(
+                                    [40.0, 18.0],
+                                    egui::Label::new(row.event.bytes.len().to_string()),
+                                );
+                                if view.inspector.deltas {
+                                    ui.add_sized(
+                                        [delta_width, 18.0],
+                                        egui::Label::new(
+                                            row.delta_ns
+                                                .map(|ns| {
+                                                    format!("{:+.3}", ns as f64 / 1_000_000.0)
+                                                })
+                                                .unwrap_or_else(|| "—".into()),
+                                        ),
+                                    );
+                                }
+                                for text in [
+                                    traffic::ascii(&row.event.bytes),
+                                    traffic::hex(&row.event.bytes),
+                                ] {
+                                    ui.add_sized(
+                                        [payload_width, 18.0],
+                                        egui::Label::new(RichText::new(&text).monospace())
+                                            .truncate(),
+                                    )
+                                    .on_hover_text(text);
+                                }
+                                if row.missed_before > 0 {
+                                    ui.colored_label(theme::WARNING, "GAP");
+                                }
+                            });
+                        }
+                    });
             });
-        });
-        if let Some(index) = remove {
-            self.bridges.remove(index);
+        if remove {
+            self.bridges.remove(self.active_bridge);
         }
     }
 }
+
 impl Drop for Workbench {
     fn drop(&mut self) {
         self.save_workspace();

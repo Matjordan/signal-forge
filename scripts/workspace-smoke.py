@@ -52,13 +52,12 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
             os.write(pairs[0][0], chunk)
             time.sleep(.05)
         for x in [330, 385, 268, 330]:  # Left: Raw Chunks -> Hex -> Line -> Raw Chunks.
-            # The baud dropdown wraps connection actions onto the next header row.
-            subprocess.run(['xdotool', 'mousemove', '--window', window, str(x), '118', 'click', '1'], check=True)
+            subprocess.run(['xdotool', 'mousemove', '--window', window, str(x), '97', 'click', '1'], check=True)
             time.sleep(.1)
-        subprocess.run(['xdotool', 'mousemove', '--window', window, '840', '118', 'click', '1'], check=True)
+        subprocess.run(['xdotool', 'mousemove', '--window', window, '985', '97', 'click', '1'], check=True)
         time.sleep(.1)
         # Change split ratio with the visible divider, then save via keyboard.
-        subprocess.run(['xdotool', 'mousemove', '--window', window, '707', '350', 'mousedown', '1', 'sleep', '0.2', 'mousemove', '--window', window, '640', '350', 'sleep', '0.2', 'mouseup', '1'], check=True)
+        subprocess.run(['xdotool', 'mousemove', '--window', window, '844', '350', 'mousedown', '1', 'sleep', '0.2', 'mousemove', '--window', window, '740', '350', 'sleep', '0.2', 'mouseup', '1'], check=True)
         key(window, 'ctrl+s')
         initial = json.loads(config_path.read_text())
         assert initial['version'] == 2

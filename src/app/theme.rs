@@ -21,7 +21,7 @@ pub const TX: Color32 = Color32::from_rgb(60, 158, 246);
 pub const CONTROL_HEIGHT: f32 = 18.0;
 pub const CANVAS_PADDING: f32 = 6.0;
 pub const TRAFFIC_ROW_HEIGHT: f32 = 18.0;
-pub const SEND_AREA_HEIGHT: f32 = 205.0;
+pub const SEND_AREA_HEIGHT: f32 = 98.0;
 const CORNER_RADIUS: u8 = 3;
 
 pub fn apply(ctx: &egui::Context) {
@@ -83,4 +83,12 @@ pub fn danger_button(label: impl Into<egui::WidgetText>) -> egui::Button<'static
 
 pub fn canvas_frame() -> egui::Frame {
     egui::Frame::new().fill(CANVAS).inner_margin(CANVAS_PADDING)
+}
+
+pub fn card_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(CARD)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .corner_radius(CornerRadius::same(CORNER_RADIUS))
+        .inner_margin(6.0)
 }
