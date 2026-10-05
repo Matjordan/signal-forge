@@ -107,6 +107,37 @@ A slow subscriber loses monitoring events instead of blocking a serial worker. S
 | Ctrl+Shift+M / R | Pause bridge displays / toggle first bridge capture |
 | Ctrl+Q | Quit, save workspace, and finish capture/cleanup |
 
+## Self-updates
+
+Signal Forge checks the official GitHub releases in the background at launch. The
+check times out after 10 seconds; offline, current-version, and incompatible-platform
+checks leave the workbench available without a prompt. Only stable Linux x86_64
+releases with the expected archive and checksum are offered. **Update Now** approves
+downloading, verification, replacement, and restart; **Not Now** dismisses the offer
+for this session. `--no-update-check` skips the check for offline benches and automation.
+
+The update dialog reports download progress, verification, installation, and restart.
+The updater verifies the published SHA-256 before extracting only the expected regular
+ELF binary, then checks its architecture and reported release version. It never runs
+the archive’s installer. HTTPS requests and redirects are restricted to GitHub release
+hosts. Checksums protect integrity; they do not provide independent publisher signatures.
+
+The executable and its containing directory must support replacement. User-local
+installations and writable unpacked releases can update in place; system/package-managed
+or read-only installations should use their installer or package manager. Unsupported
+locations report an error and keep the current app usable; the updater never requests sudo.
+
+Installation uses an atomic rename with a synced recovery copy named
+`.signal-forge-previous-*` beside the executable. Failed downloads, verification, or
+replacement keep the old installation. An immediate restart failure restores and
+relaunches the previous binary. The recovery copy remains after a successful restart;
+once satisfied with the new release, remove that copy, or use it for manual rollback.
+Workspaces, presets, captures, and configuration files are not replaced. Normal shutdown
+saves the workspace and finishes I/O cleanup before the new process starts. Launch
+`--port` arguments are not replayed: restored terminals stay disconnected and repeats,
+bridges, and captures require explicit restart. Earlier releases without the updater
+need a manual install of the first release containing this feature.
+
 ## Linux package
 
 Each passing CI run builds and uploads **signal-forge-linux-x86_64** with a release

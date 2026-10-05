@@ -3,6 +3,7 @@ mod app;
 fn main() -> eframe::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let mut initial_ports = Vec::new();
+    let mut update_enabled = true;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -10,6 +11,7 @@ fn main() -> eframe::Result<()> {
                 println!("Signal Forge {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
+            "--no-update-check" => update_enabled = false,
             "--port" => match args.next() {
                 Some(path) => initial_ports.push(path),
                 None => {
@@ -18,7 +20,7 @@ fn main() -> eframe::Result<()> {
                 }
             },
             "--help" | "-h" => {
-                println!("Usage: signal-forge [--port /dev/ttyUSB0] ...");
+                println!("Usage: signal-forge [--port /dev/ttyUSB0] ... [--no-update-check]");
                 return Ok(());
             }
             _ => {
@@ -33,9 +35,25 @@ fn main() -> eframe::Result<()> {
             .with_min_inner_size([900.0, 600.0]),
         ..Default::default()
     };
-    eframe::run_native(
+    let restart = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let restart_for_app = restart.clone();
+    let result = eframe::run_native(
         "Signal Forge",
         options,
-        Box::new(move |cc| Ok(Box::new(app::Workbench::new(cc, initial_ports)))),
-    )
+        Box::new(move |cc| {
+            Ok(Box::new(app::Workbench::new(
+                cc,
+                initial_ports,
+                update_enabled,
+                restart_for_app,
+            )))
+        }),
+    );
+    // run_native drops Workbench first: save workspace, stop captures, release devices.
+    if let Some(update) = restart.lock().unwrap().take() {
+        if let Err(error) = update.restart() {
+            eprintln!("{error}");
+        }
+    }
+    result
 }

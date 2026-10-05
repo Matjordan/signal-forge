@@ -17,3 +17,5 @@ pub mod send_history;
 pub mod workspace;
 
 pub mod terminal_display;
+
+pub mod updater;

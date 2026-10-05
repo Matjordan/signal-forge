@@ -34,7 +34,7 @@ def leaf_count(layout):
 with tempfile.TemporaryDirectory(prefix='signal-forge-ui-') as directory:
     config = Path(directory) / 'signal-forge/workspace.json'
     log_path = Path(directory) / 'app.log'
-    args = ['target/debug/signal-forge']
+    args = ['target/debug/signal-forge', '--no-update-check']
     for _, slave in pairs:
         args.extend(['--port', os.ttyname(slave)])
     with log_path.open('w') as log:
