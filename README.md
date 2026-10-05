@@ -6,6 +6,8 @@ A Linux serial-port workbench implemented in Rust with egui/eframe. The app prov
 
 ![Signal Forge running with two Linux PTYs](./docs/workbench.jpg)
 
+![Four live terminals at 1080p](./docs/four-terminals.jpg)
+
 ## Target UI
 
 ![Signal Forge target UI](./a_detailed_widescreen_dark_themed_desktop_applicat.png)
