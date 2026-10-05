@@ -77,8 +77,9 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-ui-') as directory:
             key('ctrl+l')
             command('type', '--window', window, '--clearmodifiers', 'minimum-window')
             key('Return')
-            assert select.select([pairs[-1][0]], [], [], 3)[0], 'Narrow-pane send failed'
-            assert os.read(pairs[-1][0], 64) == b'minimum-window'
+            selected_master = next(master for master, slave in pairs if os.ttyname(slave) == initial['selected'])
+            assert select.select([selected_master], [], [], 3)[0], 'Narrow-pane send failed'
+            assert os.read(selected_master, 64) == b'minimum-window'
             # Leave text editing before opening focused setup workflows.
             command('mousemove', '--window', window, '400', '200', 'click', '1')
             time.sleep(.2)

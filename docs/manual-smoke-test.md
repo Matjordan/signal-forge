@@ -9,16 +9,16 @@ it is dynamically linked, not a universal static binary. See the included
 
 1. Launch from the applications menu. Refresh devices. Open two serial ports or
    create a named PTY pair and open both paths using the app controls.
-2. Adjust each disconnected terminal's baud/data/parity/stop/flow settings,
+2. Open **Settings** and adjust each disconnected terminal's baud/data/parity/stop/flow settings,
    reconnect, and verify independent RX/TX using loopback plugs or peer clients.
    With physical adapters, verify nondefault baud/parity and hardware flow control
    on equipment supporting those modes. PTY CI does not validate electrical behavior.
 3. Send text, escaped `\r\n`, and hex `00 FF 0D 0A`. Enter must transmit from
    the payload box; Up recalls and cycles history, Down restores the draft.
    Enter elsewhere must not transmit. Invalid hex/escapes must report an error.
-4. Start a finite repeat, verify its count, start continuous repeat, then stop it.
+4. Select the **Repeat** tool and start a finite repeat, verify its count, start continuous repeat, then stop it.
    Disconnect and close the tab during a repeat; transmission must stop.
-5. Create/select/edit a preset profile, export/import it, and verify selected and
+5. Use **Presets… / Manage…** to create/select/edit a preset profile, export/import it, and verify selected and
    fixed targets. Restart alone must never transmit any preset.
 6. Drag tabs to split, stack, and float windows. Toggle hex/timestamps/autoscroll.
    Save workspace (Ctrl+S), quit, and restart. Layout, settings, display options,
@@ -38,14 +38,5 @@ Automated CI covers the byte-flow, concurrency, keyboard, capture, persistence,
 and shutdown paths without physical hardware. The physical adapter/electrical
 checks above require a local bench and are not claimed as CI evidence.
 
-### Baud selection
-
-- Select a previously unconfigured device: baud should be 19200. Check the baud
-  dropdown in both Serial settings and a disconnected terminal for all common
-  rates from 300 through 921600.
-- Choose Custom… and enter 14400. The selected rate should remain visible, and
-  reopening the workspace should retain it. Also check a saved 115200 port.
-- Enter an empty value, 0, -1, text, a fraction, or 4294967296: an inline error
-  should appear and open/reconnect must be rejected. Pick a common rate to recover.
-- Disconnect a terminal, change baud, and reconnect. Check communication with
-  hardware at the selected rate. Check the controls with narrow terminal panes.
+11. Use **4 Tiles** with four live endpoints at 1080p, 1440p, and 900×600. Send from each pane, switch Send/Repeat/Presets, and expand Settings/Display. Confirm controls remain reachable. Retile to **2 Tiles**; connections must stay open.
+12. Open each setup dialog and cancel it. No port, pair, bridge, or workspace changes should occur. Test invalid port/custom baud, duplicate pair links, identical bridge endpoints, and an invalid workspace path; errors should stay in setup.
