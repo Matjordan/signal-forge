@@ -283,7 +283,7 @@ impl TabViewer for TerminalViewer<'_> {
             let previous = tab.lines.delimiter;
             egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "receive-delimiter"))
                 .width(55.0)
-                .selected_text(format!("{:?}", tab.lines.delimiter))
+                .selected_text(match tab.lines.delimiter { LineDelimiter::Auto => "Auto", LineDelimiter::Lf => "LF", LineDelimiter::CrLf => "CRLF", LineDelimiter::Cr => "CR" })
                 .show_ui(ui, |ui| {
                     for (value, label) in [(LineDelimiter::Auto, "Auto"), (LineDelimiter::Lf, "LF"), (LineDelimiter::CrLf, "CRLF"), (LineDelimiter::Cr, "CR")] {
                         ui.selectable_value(&mut tab.lines.delimiter, value, label);

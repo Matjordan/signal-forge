@@ -47,7 +47,11 @@ impl Terminal {
             path: saved.settings.path.clone(),
         };
         let mut tab = Self::new(endpoint, saved.settings.clone());
-        tab.receive_mode = saved.receive_mode.unwrap_or(if saved.hex { ReceiveMode::Hex } else { ReceiveMode::Line });
+        tab.receive_mode = saved.receive_mode.unwrap_or(if saved.hex {
+            ReceiveMode::Hex
+        } else {
+            ReceiveMode::Line
+        });
         tab.lines = LineDisplay::new(saved.delimiter);
         tab.timestamps = saved.timestamps;
         tab.auto_scroll = saved.auto_scroll;
@@ -352,23 +356,43 @@ mod tests {
 #[cfg(test)]
 mod receive_display_tests {
     use super::*;
-    fn saved() -> SavedTerminal { SavedTerminal { settings: SerialSettings { path: "/dev/test".into(), ..Default::default() }, ..Default::default() } }
+    fn saved() -> SavedTerminal {
+        SavedTerminal {
+            settings: SerialSettings {
+                path: "/dev/test".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
     #[test]
     fn mode_switches_keep_exact_history_pending_rx_and_statistics() {
         let mut tab = Terminal::restored(&saved());
         let chunks: &[&[u8]] = &[b"STA", b"TUS=OK\r", b"\nPART"];
         let mut originals = Vec::new();
         for (index, bytes) in chunks.iter().enumerate() {
-            let event = Arc::new(TrafficEvent { sequence: index as u64 + 1, timestamp: UNIX_EPOCH, endpoint: tab.endpoint.id().clone(), direction: Direction::Rx, bytes: Arc::from(*bytes) });
-            tab.receive(event.clone()); originals.push(event);
+            let event = Arc::new(TrafficEvent {
+                sequence: index as u64 + 1,
+                timestamp: UNIX_EPOCH,
+                endpoint: tab.endpoint.id().clone(),
+                direction: Direction::Rx,
+                bytes: Arc::from(*bytes),
+            });
+            tab.receive(event.clone());
+            originals.push(event);
         }
         for mode in [ReceiveMode::Hex, ReceiveMode::RawChunks, ReceiveMode::Line] {
             tab.receive_mode = mode;
             assert_eq!(tab.history.len(), 3);
-            assert_eq!(tab.rx_bytes, chunks.iter().map(|bytes| bytes.len() as u64).sum::<u64>());
+            assert_eq!(
+                tab.rx_bytes,
+                chunks.iter().map(|bytes| bytes.len() as u64).sum::<u64>()
+            );
             assert_eq!(tab.lines.rows[0].bytes, b"STATUS=OK");
             assert_eq!(tab.lines.pending.as_ref().unwrap().bytes, b"PART");
-            for (raw, original) in tab.history.iter().zip(&originals) { assert!(Arc::ptr_eq(raw, original)); }
+            for (raw, original) in tab.history.iter().zip(&originals) {
+                assert!(Arc::ptr_eq(raw, original));
+            }
         }
         assert_eq!(Terminal::restored(&saved()).receive_mode, ReceiveMode::Line);
     }
@@ -376,7 +400,8 @@ mod receive_display_tests {
     fn modes_and_delimiters_persist_and_legacy_hex_settings_migrate() {
         for mode in [ReceiveMode::Line, ReceiveMode::RawChunks, ReceiveMode::Hex] {
             let mut tab = Terminal::restored(&saved());
-            tab.receive_mode = mode; tab.lines.delimiter = LineDelimiter::CrLf;
+            tab.receive_mode = mode;
+            tab.lines.delimiter = LineDelimiter::CrLf;
             let serialized = serde_json::to_string(&tab.saved()).unwrap();
             let restored = Terminal::restored(&serde_json::from_str(&serialized).unwrap());
             assert_eq!(restored.receive_mode, mode);

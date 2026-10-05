@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct SavedTerminal {
     pub settings: SerialSettings,
+    /// Compatibility flag for workspaces predating receive_mode.
     pub hex: bool,
     #[serde(default)]
     pub receive_mode: Option<crate::terminal_display::ReceiveMode>,
