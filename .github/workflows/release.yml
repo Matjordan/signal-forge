@@ -33,16 +33,18 @@ jobs:
           set -euo pipefail
           cd dist
           sha256sum -c *.sha256
-          tag="build-${RELEASE_SHA:0:12}"
           archive=$(find . -maxdepth 1 -name 'signal-forge-*-linux-x86_64.tar.gz' -printf '%f\n')
           [[ -n "$archive" && "$archive" != *$'\n'* ]] || { echo 'Expected one Linux archive' >&2; exit 1; }
           version=${archive#signal-forge-}
           version=${version%-linux-x86_64.tar.gz}
+          tag="v$version"
           printf 'Automated Linux x86_64 build of commit `%s`.\n\n[Build and verification](%s).\n\nDownload the archive and checksum, verify with `sha256sum -c *.sha256`, unpack, and run `bash install.sh`. Requires Ubuntu 24.04 or compatible newer glibc Linux, X11/Wayland and OpenGL.\n' "$RELEASE_SHA" "$RELEASE_RUN_URL" > "$RUNNER_TEMP/release-notes.md"
           if gh release view "$tag" >/dev/null 2>&1; then
+            target=$(gh release view "$tag" --json targetCommitish --jq '.targetCommitish')
+            [[ "$target" == "$RELEASE_SHA" ]] || { echo "Version $version already belongs to another commit" >&2; exit 1; }
             gh release upload "$tag" "$archive" "$archive.sha256" --clobber
           else
             gh release create "$tag" "$archive" "$archive.sha256" \
-              --target "$RELEASE_SHA" --title "Signal Forge $version (${RELEASE_SHA:0:12})" \
+              --target "$RELEASE_SHA" --title "Signal Forge $version" \
               --notes-file "$RUNNER_TEMP/release-notes.md" --latest
           fi
