@@ -364,7 +364,10 @@ impl Workbench {
         self.preset_editor_open = open && !saved;
     }
     pub(super) fn preset_shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.wants_keyboard_input() || self.preset_editor_open {
+        if ctx.wants_keyboard_input()
+            || self.preset_editor_open
+            || ctx.input(|i| i.modifiers.alt || i.modifiers.shift)
+        {
             return;
         }
         let keys = [
