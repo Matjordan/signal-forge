@@ -107,6 +107,38 @@ A slow subscriber loses monitoring events instead of blocking a serial worker. S
 | Ctrl+Shift+M / R | Pause bridge displays / toggle first bridge capture |
 | Ctrl+Q | Quit, save workspace, and finish capture/cleanup |
 
+## Self-updates
+
+Signal Forge checks the official GitHub releases in the background at launch. The
+check times out after 10 seconds; offline, current-version, and incompatible-platform
+checks leave the workbench available without a prompt. Only stable Linux x86_64
+releases with the expected archive and checksum are offered. **Update Now** approves
+downloading, verification, replacement, and restart; **Not Now** dismisses the offer
+for this session. `--no-update-check` skips the check for offline benches and automation.
+
+The update dialog reports download progress, verification, installation, and restart.
+The updater verifies the published SHA-256 before extracting only the expected regular
+ELF binary, then checks its architecture and reported release version. It never runs
+the archive’s installer. HTTPS requests and redirects are restricted to GitHub release
+hosts. Checksums protect integrity; they do not provide independent publisher signatures.
+
+The executable and its containing directory must support replacement. User-local
+installations and writable unpacked releases can update in place; system/package-managed
+or read-only installations should use their installer or package manager. Unsupported
+locations report an error and keep the current app usable; the updater never requests sudo.
+
+Installation uses an atomic rename with a synced recovery copy named
+`.signal-forge-previous-*` beside the executable. Failed downloads, verification, or
+replacement keep the old installation. The new process must confirm that its workbench is initialized at the expected
+version within 15 seconds; failure restores and relaunches the previous binary with
+a visible error and a Continue action. The recovery copy remains after a successful restart;
+once satisfied with the new release, remove that copy, or use it for manual rollback.
+Workspaces, presets, captures, and configuration files are not replaced. Normal shutdown
+saves the workspace and finishes I/O cleanup before the new process starts. Launch
+`--port` arguments are not replayed: restored terminals stay disconnected and repeats,
+bridges, and captures require explicit restart. Earlier releases without the updater
+need a manual install of the first release containing this feature.
+
 ## Linux package
 
 Each passing CI run builds and uploads **signal-forge-linux-x86_64** with a release
@@ -145,7 +177,7 @@ repeats/cancellation, concurrent duplex bridges/backpressure, disconnect/reopen,
 traffic filtering, capture integrity, and shutdown. Workspace tests cover migration,
 layout/options round trips, invalid/corrupt config preservation, and atomic saves.
 Xvfb GUI tests exercise presets, Enter/Up/Down, real forwarding/capture, restart
-without opening or transmitting, recovery, and graceful cleanup. UI checks exercise four live panes at 1920×1080, 2560×1440, and the 900×600 minimum, narrow-pane transmission, two/four-tile rearrangement without reopening, and setup cancellation. The release archive
+without opening or transmitting, recovery, and graceful cleanup. UI checks exercise four live panes at 1920×1080, 2560×1440, and the 900×600 minimum, narrow-pane transmission, two/four-tile rearrangement without reopening, and setup cancellation. A restarted-GUI check confirms the expected version over the private readiness channel, preserves workspace/preset data, and verifies that no serial connection or TX starts automatically. The release archive
 is extracted, checksum-verified, installed into a temporary prefix, and launched
 with `--help` in CI. Physical adapters and electrical flow/parity behavior require
 a local bench and are not claimed as PTY test coverage.

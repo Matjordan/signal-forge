@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
     log = open(Path(directory) / 'app.log', 'w')
     process = None
     try:
-        args = ['target/debug/signal-forge']
+        args = ['target/debug/signal-forge', '--no-update-check']
         for _, slave in pairs:
             args.extend(['--port', os.ttyname(slave)])
         process = subprocess.Popen(args, env=env, stderr=log)
@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         assert right['receive_mode'] == 'Hex', right
         assert left['delimiter'] == right['delimiter'] == 'Auto'
         quit_app(process, window)
-        process = subprocess.Popen(['target/debug/signal-forge'], env=env, stderr=log)
+        process = subprocess.Popen(['target/debug/signal-forge', '--no-update-check'], env=env, stderr=log)
         window = window_for(process)
         assert not select.select([p[0] for p in pairs], [], [], .3)[0], 'Restore transmitted bytes'
         log.flush()
@@ -92,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         # Corrupt config must be preserved through ordinary save and clean quit.
         broken = b'{broken workspace JSON'
         config_path.write_bytes(broken)
-        process = subprocess.Popen(['target/debug/signal-forge'], env=env, stderr=log)
+        process = subprocess.Popen(['target/debug/signal-forge', '--no-update-check'], env=env, stderr=log)
         window = window_for(process)
         key(window, 'ctrl+s')
         assert config_path.read_bytes() == broken

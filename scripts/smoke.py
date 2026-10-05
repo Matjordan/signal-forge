@@ -25,7 +25,7 @@ pairs = [pty.openpty(), pty.openpty()]
 for master, slave in pairs:
     tty.setraw(slave)
     os.set_blocking(master, False)
-args = ["target/debug/signal-forge"]
+args = ["target/debug/signal-forge", "--no-update-check"]
 for _, slave in pairs:
     args.extend(["--port", os.ttyname(slave)])
 with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:

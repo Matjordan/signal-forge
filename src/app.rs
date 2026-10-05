@@ -5,6 +5,7 @@ mod connection_ui;
 mod preset_ui;
 mod terminal_ui;
 mod theme;
+mod update_ui;
 mod workbench_ui;
 mod workspace_ui;
 
@@ -238,6 +239,7 @@ impl TabViewer for TerminalViewer<'_> {
 }
 
 pub struct Workbench {
+    updater: update_ui::UpdateController,
     setup: Option<workbench_ui::SetupDialog>,
     preset_library_open: bool,
     active_bridge: usize,
@@ -268,7 +270,13 @@ pub struct Workbench {
     config_recoverable: bool,
 }
 impl Workbench {
-    pub fn new(cc: &eframe::CreationContext<'_>, initial_ports: Vec<String>) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        initial_ports: Vec<String>,
+        update_enabled: bool,
+        restart: update_ui::RestartRequest,
+        update_failure: Option<String>,
+    ) -> Self {
         theme::apply(&cc.egui_ctx);
         let (config, mut error, config_recoverable) = match WorkspaceConfig::load() {
             Ok(c) => (c, None, true),
@@ -285,6 +293,7 @@ impl Workbench {
         let bus = TrafficBus::default();
         let traffic = bus.subscribe(4096);
         let mut app = Self {
+            updater: update_ui::UpdateController::new(update_enabled, restart, update_failure),
             setup: None,
             preset_library_open: false,
             active_bridge: 0,
@@ -472,5 +481,6 @@ impl eframe::App for Workbench {
         }
         self.preset_library_ui(ctx);
         self.setup_dialog_ui(ctx);
+        self.update_prompt(ctx);
     }
 }
