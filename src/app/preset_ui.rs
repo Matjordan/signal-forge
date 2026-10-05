@@ -1,4 +1,4 @@
-use super::{theme::ACCENT, Workbench};
+use super::{theme, Workbench};
 use eframe::egui::{self, RichText};
 use signal_forge::{
     endpoint::{ConnectionState, EndpointId},

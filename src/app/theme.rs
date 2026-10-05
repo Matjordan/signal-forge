@@ -36,11 +36,11 @@ pub fn apply(ctx: &egui::Context) {
     visuals.hyperlink_color = ACCENT;
     visuals.warn_fg_color = WARNING;
     visuals.error_fg_color = ERROR;
-    visuals.window_stroke = Stroke::new(1.0, BORDER);
+    visuals.window_stroke = Stroke::new(1.0_f32, BORDER);
     visuals.window_corner_radius = CornerRadius::same(CORNER_RADIUS);
     visuals.menu_corner_radius = CornerRadius::same(CORNER_RADIUS);
     visuals.selection.bg_fill = SELECTION;
-    visuals.selection.stroke = Stroke::new(1.0, TEXT);
+    visuals.selection.stroke = Stroke::new(1.0_f32, TEXT);
     for (widget, background) in [
         (&mut visuals.widgets.noninteractive, PANEL),
         (&mut visuals.widgets.inactive, CARD),
@@ -50,8 +50,8 @@ pub fn apply(ctx: &egui::Context) {
     ] {
         widget.bg_fill = background;
         widget.weak_bg_fill = background;
-        widget.bg_stroke = Stroke::new(1.0, BORDER);
-        widget.fg_stroke = Stroke::new(1.0, TEXT);
+        widget.bg_stroke = Stroke::new(1.0_f32, BORDER);
+        widget.fg_stroke = Stroke::new(1.0_f32, TEXT);
         widget.corner_radius = CornerRadius::same(CORNER_RADIUS);
     }
     style.spacing.item_spacing = egui::vec2(8.0, 3.0);
