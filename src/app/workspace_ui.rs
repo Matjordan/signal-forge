@@ -31,7 +31,9 @@ impl Terminal {
     fn saved(&self) -> SavedTerminal {
         SavedTerminal {
             settings: self.settings.clone(),
-            hex: self.hex,
+            hex: self.receive_mode == ReceiveMode::Hex,
+            receive_mode: Some(self.receive_mode),
+            delimiter: self.lines.delimiter,
             timestamps: self.timestamps,
             auto_scroll: self.auto_scroll,
             encoding: self.encoding,
@@ -45,7 +47,12 @@ impl Terminal {
             path: saved.settings.path.clone(),
         };
         let mut tab = Self::new(endpoint, saved.settings.clone());
-        tab.hex = saved.hex;
+        tab.receive_mode = saved.receive_mode.unwrap_or(if saved.hex {
+            ReceiveMode::Hex
+        } else {
+            ReceiveMode::Line
+        });
+        tab.lines = LineDisplay::new(saved.delimiter);
         tab.timestamps = saved.timestamps;
         tab.auto_scroll = saved.auto_scroll;
         tab.encoding = saved.encoding;
@@ -343,5 +350,70 @@ mod tests {
     #[test]
     fn empty_dock_can_be_saved_without_indexing_missing_root() {
         assert!(snapshot(&egui_dock::Tree::new(vec![]), NodeIndex::root()).is_none());
+    }
+}
+
+#[cfg(test)]
+mod receive_display_tests {
+    use super::*;
+    fn saved() -> SavedTerminal {
+        SavedTerminal {
+            settings: SerialSettings {
+                path: "/dev/test".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn mode_switches_keep_exact_history_pending_rx_and_statistics() {
+        let mut tab = Terminal::restored(&saved());
+        let chunks: &[&[u8]] = &[b"STA", b"TUS=OK\r", b"\nPART"];
+        let mut originals = Vec::new();
+        for (index, bytes) in chunks.iter().enumerate() {
+            let event = Arc::new(TrafficEvent {
+                sequence: index as u64 + 1,
+                timestamp: UNIX_EPOCH,
+                endpoint: tab.endpoint.id().clone(),
+                direction: Direction::Rx,
+                bytes: Arc::from(*bytes),
+            });
+            tab.receive(event.clone());
+            originals.push(event);
+        }
+        for mode in [ReceiveMode::Hex, ReceiveMode::RawChunks, ReceiveMode::Line] {
+            tab.receive_mode = mode;
+            assert_eq!(tab.history.len(), 3);
+            assert_eq!(
+                tab.rx_bytes,
+                chunks.iter().map(|bytes| bytes.len() as u64).sum::<u64>()
+            );
+            assert_eq!(tab.lines.rows[0].bytes, b"STATUS=OK");
+            assert_eq!(tab.lines.pending.as_ref().unwrap().bytes, b"PART");
+            for (raw, original) in tab.history.iter().zip(&originals) {
+                assert!(Arc::ptr_eq(raw, original));
+            }
+        }
+        assert_eq!(Terminal::restored(&saved()).receive_mode, ReceiveMode::Line);
+    }
+    #[test]
+    fn modes_and_delimiters_persist_and_legacy_hex_settings_migrate() {
+        for mode in [ReceiveMode::Line, ReceiveMode::RawChunks, ReceiveMode::Hex] {
+            let mut tab = Terminal::restored(&saved());
+            tab.receive_mode = mode;
+            tab.lines.delimiter = LineDelimiter::CrLf;
+            let serialized = serde_json::to_string(&tab.saved()).unwrap();
+            let restored = Terminal::restored(&serde_json::from_str(&serialized).unwrap());
+            assert_eq!(restored.receive_mode, mode);
+            assert_eq!(restored.lines.delimiter, LineDelimiter::CrLf);
+            assert!(restored.lines.is_empty());
+        }
+        let mut legacy = serde_json::to_value(saved()).unwrap();
+        legacy.as_object_mut().unwrap().remove("receive_mode");
+        legacy.as_object_mut().unwrap().remove("delimiter");
+        legacy["hex"] = true.into();
+        let restored = Terminal::restored(&serde_json::from_value(legacy).unwrap());
+        assert_eq!(restored.receive_mode, ReceiveMode::Hex);
+        assert_eq!(restored.lines.delimiter, LineDelimiter::Auto);
     }
 }

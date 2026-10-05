@@ -47,6 +47,15 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
             args.extend(['--port', os.ttyname(slave)])
         process = subprocess.Popen(args, env=env, stderr=log)
         window = window_for(process)
+        # RX fragments and independent receive modes must survive a workspace restart.
+        for chunk in [b'STA', b'TUS=OK\r', b'\nPART']:
+            os.write(pairs[0][0], chunk)
+            time.sleep(.05)
+        for x in [330, 385, 268, 330]:  # Left: Raw Chunks -> Hex -> Line -> Raw Chunks.
+            subprocess.run(['xdotool', 'mousemove', '--window', window, str(x), '97', 'click', '1'], check=True)
+            time.sleep(.1)
+        subprocess.run(['xdotool', 'mousemove', '--window', window, '840', '97', 'click', '1'], check=True)
+        time.sleep(.1)
         # Change split ratio with the visible divider, then save via keyboard.
         subprocess.run(['xdotool', 'mousemove', '--window', window, '707', '350', 'mousedown', '1', 'sleep', '0.2', 'mousemove', '--window', window, '640', '350', 'sleep', '0.2', 'mouseup', '1'], check=True)
         key(window, 'ctrl+s')
@@ -55,6 +64,11 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         assert initial['layout']['Split']['horizontal'] is True
         assert abs(initial['layout']['Split']['fraction'] - .5) > .02, initial
         assert len(initial['ports']) == 2
+        left = initial['layout']['Split']['first']['Leaf']['tabs'][0]
+        right = initial['layout']['Split']['second']['Leaf']['tabs'][0]
+        assert left['receive_mode'] == 'RawChunks', left
+        assert right['receive_mode'] == 'Hex', right
+        assert left['delimiter'] == right['delimiter'] == 'Auto'
         quit_app(process, window)
         process = subprocess.Popen(['target/debug/signal-forge'], env=env, stderr=log)
         window = window_for(process)
