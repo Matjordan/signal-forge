@@ -129,8 +129,8 @@ locations report an error and keep the current app usable; the updater never req
 
 Installation uses an atomic rename with a synced recovery copy named
 `.signal-forge-previous-*` beside the executable. Failed downloads, verification, or
-replacement keep the old installation. An immediate restart failure restores and
-relaunches the previous binary. The recovery copy remains after a successful restart;
+replacement keep the old installation. The new process must confirm that its workbench is initialized at the expected
+version within 15 seconds; failure restores and relaunches the previous binary. The recovery copy remains after a successful restart;
 once satisfied with the new release, remove that copy, or use it for manual rollback.
 Workspaces, presets, captures, and configuration files are not replaced. Normal shutdown
 saves the workspace and finishes I/O cleanup before the new process starts. Launch
@@ -176,7 +176,7 @@ repeats/cancellation, concurrent duplex bridges/backpressure, disconnect/reopen,
 traffic filtering, capture integrity, and shutdown. Workspace tests cover migration,
 layout/options round trips, invalid/corrupt config preservation, and atomic saves.
 Xvfb GUI tests exercise presets, Enter/Up/Down, real forwarding/capture, restart
-without opening or transmitting, recovery, and graceful cleanup. UI checks exercise four live panes at 1920×1080, 2560×1440, and the 900×600 minimum, narrow-pane transmission, two/four-tile rearrangement without reopening, and setup cancellation. The release archive
+without opening or transmitting, recovery, and graceful cleanup. UI checks exercise four live panes at 1920×1080, 2560×1440, and the 900×600 minimum, narrow-pane transmission, two/four-tile rearrangement without reopening, and setup cancellation. A restarted-GUI check confirms the expected version over the private readiness channel, preserves workspace/preset data, and verifies that no serial connection or TX starts automatically. The release archive
 is extracted, checksum-verified, installed into a temporary prefix, and launched
 with `--help` in CI. Physical adapters and electrical flow/parity behavior require
 a local bench and are not claimed as PTY test coverage.

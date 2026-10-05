@@ -29,6 +29,7 @@ fn main() -> eframe::Result<()> {
             }
         }
     }
+    let ready_signal = signal_forge::updater::take_restart_signal();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 900.0])
@@ -41,12 +42,9 @@ fn main() -> eframe::Result<()> {
         "Signal Forge",
         options,
         Box::new(move |cc| {
-            Ok(Box::new(app::Workbench::new(
-                cc,
-                initial_ports,
-                update_enabled,
-                restart_for_app,
-            )))
+            let workbench = app::Workbench::new(cc, initial_ports, update_enabled, restart_for_app);
+            signal_forge::updater::signal_workbench_ready(ready_signal);
+            Ok(Box::new(workbench))
         }),
     );
     // run_native drops Workbench first: save workspace, stop captures, release devices.

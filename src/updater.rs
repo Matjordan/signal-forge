@@ -158,10 +158,12 @@ pub enum Progress {
     Restarting,
 }
 pub struct PreparedUpdate {
+    version: Version,
     binary: tempfile::TempPath,
     target: PathBuf,
 }
 pub struct InstalledUpdate {
+    version: Version,
     pub target: PathBuf,
     pub backup: PathBuf,
 }
@@ -234,7 +236,11 @@ pub fn prepare(
         .map_err(|e| e.to_string())?;
     let binary = binary.into_temp_path();
     validate_binary(&binary, &offer.version)?;
-    Ok(PreparedUpdate { binary, target })
+    Ok(PreparedUpdate {
+        version: offer.version.clone(),
+        binary,
+        target,
+    })
 }
 pub fn parse_checksum(text: &str, name: &str) -> Result<String> {
     let fields: Vec<_> = text.split_whitespace().collect();
@@ -352,6 +358,7 @@ impl PreparedUpdate {
             return Err(format!("Install failed; existing executable kept: {error}"));
         }
         let installed = InstalledUpdate {
+            version: self.version,
             target: self.target,
             backup: backup_path,
         };
@@ -376,32 +383,87 @@ impl InstalledUpdate {
     }
     /// Called only after the old workbench is dropped, saving its workspace and releasing I/O.
     pub fn restart(self) -> Result<()> {
-        match Command::new(&self.target).spawn() {
-            Ok(mut child) => {
-                std::thread::sleep(Duration::from_millis(500));
-                if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-                    self.rollback()?;
-                    Command::new(&self.target)
-                        .spawn()
-                        .map_err(|e| e.to_string())?;
-                    return Err("New process exited during startup; restored and restarted the previous version.".into());
+        use std::io::BufRead;
+        use std::os::{fd::AsRawFd, unix::net::UnixStream};
+        let attempt = (|| -> Result<()> {
+            let (reader, writer) = UnixStream::pair().map_err(|e| e.to_string())?;
+            reader
+                .set_read_timeout(Some(Duration::from_secs(15)))
+                .map_err(|e| e.to_string())?;
+            // Inherit only the readiness socket; normal descriptors remain close-on-exec.
+            nix::fcntl::fcntl(
+                writer.as_raw_fd(),
+                nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::empty()),
+            )
+            .map_err(|e| e.to_string())?;
+            let spawned = Command::new(&self.target)
+                .env(
+                    "SIGNAL_FORGE_UPDATE_READY_FD",
+                    writer.as_raw_fd().to_string(),
+                )
+                .spawn();
+            drop(writer);
+            let error = match spawned {
+                Ok(mut child) => {
+                    let mut message = String::new();
+                    let ready = std::io::BufReader::new(reader.take(256)).read_line(&mut message);
+                    if ready.is_ok() && message.trim() == format!("READY {}", self.version) {
+                        log::info!(
+                            "Updated workbench ready at {}; recovery copy: {}",
+                            self.version,
+                            self.backup.display()
+                        );
+                        return Ok(());
+                    }
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    format!(
+                        "New workbench did not confirm version {}: {}",
+                        self.version,
+                        ready.err().map(|e| e.to_string()).unwrap_or(message)
+                    )
                 }
-                log::info!(
-                    "Updated executable restarted; recovery copy: {}",
-                    self.backup.display()
-                );
-                Ok(())
-            }
-            Err(error) => {
-                self.rollback()?;
-                Command::new(&self.target)
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
-                Err(format!(
-                    "Restart failed ({error}); restored and restarted the previous version."
-                ))
-            }
-        }
+                Err(error) => format!("Restart failed: {error}"),
+            };
+            Err(error)
+        })();
+        let Err(error) = attempt else {
+            return Ok(());
+        };
+        self.rollback()?;
+        Command::new(&self.target)
+            .spawn()
+            .map_err(|e| format!("Previous executable restored but relaunch failed: {e}"))?;
+        Err(format!(
+            "{error}. Restored and restarted the previous version."
+        ))
+    }
+}
+/// Called at launch before GUI threads start. The socket is supplied only by our updater.
+pub fn take_restart_signal() -> Option<std::os::unix::net::UnixStream> {
+    use std::os::fd::FromRawFd;
+    let value = std::env::var("SIGNAL_FORGE_UPDATE_READY_FD").ok()?;
+    std::env::remove_var("SIGNAL_FORGE_UPDATE_READY_FD");
+    let fd: i32 = value.parse().ok().filter(|fd| *fd >= 3)?;
+    // Verify that the inherited descriptor is a socket before taking ownership.
+    let stat = nix::sys::stat::fstat(fd).ok()?;
+    if stat.st_mode & nix::libc::S_IFMT != nix::libc::S_IFSOCK {
+        return None;
+    }
+    nix::fcntl::fcntl(
+        fd,
+        nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC),
+    )
+    .ok()?;
+    // SAFETY: the parent deliberately inherited this descriptor, and this function is
+    // called once before other threads or descriptor-owning workbench resources exist.
+    let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
+    socket.peer_addr().ok()?;
+    Some(socket)
+}
+pub fn signal_workbench_ready(socket: Option<std::os::unix::net::UnixStream>) {
+    if let Some(mut socket) = socket {
+        let _ = writeln!(socket, "READY {}", env!("CARGO_PKG_VERSION"));
     }
 }
 
@@ -547,7 +609,7 @@ mod tests {
         let path = directory.join(name);
         let source = directory.join(format!("{name}.rs"));
         let marker = directory.join(format!("{name}.started"));
-        fs::write(&source, format!(r#"fn main() {{ if std::env::args().any(|a| a == "--version") {{ println!("Signal Forge {version}"); }} else {{ std::fs::write({marker:?}, "{version}").unwrap(); std::thread::sleep(std::time::Duration::from_secs(2)); }} }}"#, marker=marker.to_str().unwrap())).unwrap();
+        fs::write(&source, format!(r#"fn main() {{ if std::env::args().any(|a| a == "--version") {{ println!("Signal Forge {version}"); }} else {{ std::fs::write({marker:?}, "{version}").unwrap(); if let Ok(fd) = std::env::var("SIGNAL_FORGE_UPDATE_READY_FD") {{ use std::os::fd::FromRawFd; use std::io::Write; let mut socket = unsafe {{ std::os::unix::net::UnixStream::from_raw_fd(fd.parse().unwrap()) }}; writeln!(socket, "READY {version}").unwrap(); }} std::thread::sleep(std::time::Duration::from_secs(2)); }} }}"#, marker=marker.to_str().unwrap())).unwrap();
         assert!(Command::new("rustc")
             .arg("--crate-name")
             .arg("fixture")
@@ -567,6 +629,7 @@ mod tests {
             .set_permissions(fs::Permissions::from_mode(0o755))
             .unwrap();
         PreparedUpdate {
+            version: Version::new(1, 0, 0),
             binary: binary.into_temp_path(),
             target: target.to_path_buf(),
         }
@@ -590,11 +653,8 @@ mod tests {
         let config = dir.path().join("workspace.json");
         fs::write(&config, b"user workspace").unwrap();
         let installed = prepared(&new, &target).install().unwrap();
-        assert_eq!(
-            fs::read(&installed.backup).unwrap(),
-            fs::read(&old).unwrap()
-        );
-        assert_eq!(fs::read(&target).unwrap(), fs::read(&new).unwrap());
+        assert!(fs::read(&installed.backup).unwrap() == fs::read(&old).unwrap());
+        assert!(fs::read(&target).unwrap() == fs::read(&new).unwrap());
         installed.restart().unwrap();
         assert_eq!(fs::read(dir.path().join("new.started")).unwrap(), b"1.0.0");
         assert!(!dir.path().join("old.started").exists());
@@ -611,6 +671,25 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), b"old application");
     }
     #[test]
+    fn wrong_restarted_version_rolls_back_and_relaunches_old_workbench() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = fixture(dir.path(), "old", "0.1.0");
+        let wrong = fixture(dir.path(), "wrong", "2.0.0");
+        let target = dir.path().join("signal-forge");
+        fs::copy(&old, &target).unwrap();
+        let installed = prepared(&wrong, &target).install().unwrap();
+        assert!(installed
+            .restart()
+            .unwrap_err()
+            .contains("did not confirm version"));
+        assert!(fs::read(&target).unwrap() == fs::read(&old).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !dir.path().join("old.started").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(dir.path().join("old.started").exists());
+    }
+    #[test]
     fn restart_failure_restores_and_relaunches_previous_executable() {
         let dir = tempfile::tempdir().unwrap();
         let old = fixture(dir.path(), "old", "0.1.0");
@@ -620,7 +699,7 @@ mod tests {
         let installed = prepared(&new, &target).install().unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
         assert!(installed.restart().is_err());
-        assert_eq!(fs::read(&target).unwrap(), fs::read(&old).unwrap());
+        assert!(fs::read(&target).unwrap() == fs::read(&old).unwrap());
         let deadline = Instant::now() + Duration::from_secs(3);
         while !dir.path().join("old.started").exists() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
