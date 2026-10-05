@@ -94,3 +94,26 @@ fn atomic_save_replaces_file_and_leaves_no_temporary_file() {
     assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn new_ports_default_to_19200_and_saved_custom_rates_survive() {
+    assert_eq!(SerialSettings::default().baud, 19200);
+    for baud in [9600, 115200, 14400, 5_000_000] {
+        let mut saved = terminal("/dev/test");
+        saved.settings.baud = baud;
+        let config = WorkspaceConfig {
+            ports: vec![saved.settings.clone()],
+            layout: Some(Layout::Leaf {
+                tabs: vec![saved],
+                active: 0,
+            }),
+            ..Default::default()
+        };
+        let restored = WorkspaceConfig::parse(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(restored.ports[0].baud, baud);
+        let Some(Layout::Leaf { tabs, .. }) = restored.layout else {
+            panic!("Missing terminal")
+        };
+        assert_eq!(tabs[0].settings.baud, baud);
+    }
+}

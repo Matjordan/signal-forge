@@ -1,3 +1,6 @@
+mod baud_ui;
+use baud_ui::BaudControl;
+
 mod connection_ui;
 mod preset_ui;
 mod workspace_ui;
@@ -28,6 +31,7 @@ const GREEN: Color32 = Color32::from_rgb(89, 210, 118);
 struct Terminal {
     endpoint: Box<dyn Endpoint>,
     settings: SerialSettings,
+    baud_control: BaudControl,
     history: VecDeque<Arc<TrafficEvent>>,
     rx_gap: bool,
     rx_breaks: std::collections::HashSet<u64>,
@@ -53,6 +57,7 @@ impl Terminal {
     fn new(endpoint: impl Endpoint + 'static, settings: SerialSettings) -> Self {
         Self {
             endpoint: Box::new(endpoint),
+            baud_control: BaudControl::new(settings.baud),
             settings,
             history: VecDeque::new(),
             rx_gap: false,
@@ -198,12 +203,7 @@ impl TabViewer for TerminalViewer<'_> {
             ui.horizontal_wrapped(|ui| {
                 let connected = tab.endpoint.state() == ConnectionState::Connected;
                 ui.add_enabled_ui(!connected, |ui| {
-                    ui.label("Baud");
-                    ui.add(
-                        egui::DragValue::new(&mut tab.settings.baud)
-                            .range(1..=4_000_000)
-                            .speed(100),
-                    );
+                    tab.baud_control.ui(ui, &mut tab.settings.baud);
                     egui::ComboBox::from_id_salt("pane_bits")
                         .width(40.0)
                         .selected_text(format!("{} bits", tab.settings.data_bits))
@@ -268,6 +268,8 @@ impl TabViewer for TerminalViewer<'_> {
                     if connected {
                         tab.stop_repeat();
                         tab.endpoint.disconnect();
+                    } else if let Err(error) = tab.baud_control.validate() {
+                        tab.error = Some(error.into());
                     } else {
                         tab.endpoint.disconnect();
                         match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
@@ -613,6 +615,7 @@ pub struct Workbench {
     traffic: Receiver<Arc<TrafficEvent>>,
     ports: Vec<String>,
     settings: SerialSettings,
+    baud_control: BaudControl,
     config: WorkspaceConfig,
     error: Option<String>,
     config_recoverable: bool,
@@ -660,6 +663,7 @@ impl Workbench {
             bus,
             traffic,
             ports: Vec::new(),
+            baud_control: BaudControl::new(settings.baud),
             settings,
             config,
             error,
@@ -678,6 +682,7 @@ impl Workbench {
                     path,
                     ..Default::default()
                 });
+            app.baud_control = BaudControl::new(app.settings.baud);
             app.connect();
         }
         app
@@ -689,6 +694,10 @@ impl Workbench {
         }
     }
     fn connect(&mut self) {
+        if let Err(error) = self.baud_control.validate() {
+            self.error = Some(error.into());
+            return;
+        }
         if let Some((_, tab)) = self
             .dock
             .iter_all_tabs_mut()
@@ -699,6 +708,7 @@ impl Workbench {
                 return;
             }
             tab.settings = self.settings.clone();
+            tab.baud_control = BaudControl::new(tab.settings.baud);
             tab.endpoint.disconnect();
             match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
                 Ok(endpoint) => {
@@ -734,13 +744,8 @@ impl Workbench {
         ui.label("Device path");
         ui.text_edit_singleline(&mut self.settings.path);
         ui.small("Physical device or an existing /dev/pts/N path");
-        ui.horizontal(|ui| {
-            ui.label("Baud");
-            ui.add(
-                egui::DragValue::new(&mut self.settings.baud)
-                    .range(1..=4_000_000)
-                    .speed(100),
-            );
+        ui.horizontal_wrapped(|ui| {
+            self.baud_control.ui(ui, &mut self.settings.baud);
         });
         egui::ComboBox::from_id_salt("bits")
             .selected_text(format!("{} data bits", self.settings.data_bits))
@@ -791,6 +796,7 @@ impl Workbench {
                 .clicked()
             {
                 self.settings = saved.clone();
+                self.baud_control = BaudControl::new(self.settings.baud);
             }
         }
         ui.separator();
@@ -891,6 +897,7 @@ impl eframe::App for Workbench {
                                                 path: path.clone(),
                                                 ..Default::default()
                                             });
+                                        self.baud_control = BaudControl::new(self.settings.baud);
                                     }
                                 }
                             });

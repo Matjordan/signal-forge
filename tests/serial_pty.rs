@@ -313,3 +313,21 @@ fn repeat_unplug_and_drop_cancel_without_restart() {
     assert_eq!(handle.status().state, RepeatState::Cancelled);
     assert_no_more_bytes(&mut master);
 }
+
+#[test]
+fn opening_and_reconnecting_apply_selected_baud() {
+    use nix::sys::termios::{cfgetospeed, BaudRate};
+    let (_master, path, slave) = pty();
+    let bus = TrafficBus::default();
+    let mut settings = SerialSettings {
+        path,
+        ..Default::default()
+    };
+    let mut endpoint = SerialEndpoint::open(&settings, bus.clone()).unwrap();
+    assert_eq!(cfgetospeed(&tcgetattr(&slave).unwrap()), BaudRate::B19200);
+    endpoint.disconnect();
+    settings.baud = 57600;
+    let mut endpoint = SerialEndpoint::open(&settings, bus).unwrap();
+    assert_eq!(cfgetospeed(&tcgetattr(&slave).unwrap()), BaudRate::B57600);
+    endpoint.disconnect();
+}

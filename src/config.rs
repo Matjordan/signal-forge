@@ -26,7 +26,7 @@ impl Default for SerialSettings {
     fn default() -> Self {
         Self {
             path: String::new(),
-            baud: 115200,
+            baud: 19200,
             data_bits: 8,
             parity: Parity::None,
             stop_bits: 1,

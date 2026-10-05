@@ -37,3 +37,15 @@ it is dynamically linked, not a universal static binary. See the included
 Automated CI covers the byte-flow, concurrency, keyboard, capture, persistence,
 and shutdown paths without physical hardware. The physical adapter/electrical
 checks above require a local bench and are not claimed as CI evidence.
+
+### Baud selection
+
+- Select a previously unconfigured device: baud should be 19200. Check the baud
+  dropdown in both Serial settings and a disconnected terminal for all common
+  rates from 300 through 921600.
+- Choose Custom… and enter 14400. The selected rate should remain visible, and
+  reopening the workspace should retain it. Also check a saved 115200 port.
+- Enter an empty value, 0, -1, text, a fraction, or 4294967296: an inline error
+  should appear and open/reconnect must be rejected. Pick a common rate to recover.
+- Disconnect a terminal, change baud, and reconnect. Check communication with
+  hardware at the selected rate. Check the controls with narrow terminal panes.
