@@ -54,6 +54,8 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-ui-') as directory:
             time.sleep(.5)
             for index, (master, _) in enumerate(pairs):
                 os.write(master, f'Device {index + 1}: ready at 19200\r\n'.encode())
+            command('mousemove', '--window', window, '400', '200', 'click', '1')
+            time.sleep(.2)
             key('ctrl+alt+4')
             initial = snapshot(config)
             assert leaf_count(initial['layout']) == 4, initial
