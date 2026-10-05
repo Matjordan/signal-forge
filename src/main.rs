@@ -6,6 +6,10 @@ fn main() -> eframe::Result<()> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--version" | "-V" => {
+                println!("Signal Forge {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
             "--port" => match args.next() {
                 Some(path) => initial_ports.push(path),
                 None => {

@@ -10,6 +10,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify automatic release versioning
+        run: python3 scripts/test-release-version.py
+      - name: Set version for this build
+        run: python3 scripts/release-version.py --apply
       - name: Install Linux native dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick xdotool
       - uses: dtolnay/rust-toolchain@stable
@@ -40,6 +46,9 @@ jobs:
           cd signal-forge-*-linux-x86_64
           bash install.sh "$RUNNER_TEMP/signal-forge-install"
           "$RUNNER_TEMP/signal-forge-install/bin/signal-forge" --help
+          expected=${PWD##*/signal-forge-}
+          expected=${expected%-linux-x86_64}
+          test "$("$RUNNER_TEMP/signal-forge-install/bin/signal-forge" --version)" = "Signal Forge $expected"
           test -f "$RUNNER_TEMP/signal-forge-install/share/applications/signal-forge.desktop"
           test -f "$RUNNER_TEMP/signal-forge-install/share/doc/signal-forge/docs/workbench.jpg"
           test -f "$RUNNER_TEMP/signal-forge-install/share/doc/signal-forge/docs/manual-smoke-test.md"

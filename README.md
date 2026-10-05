@@ -113,12 +113,23 @@ You can also run the included `bin/signal-forge` directly. The package targets
 Ubuntu 24.04 x86_64 or compatible newer glibc Linux with X11/Wayland and OpenGL.
 
 Build the same package locally with `bash scripts/package-linux.sh`. Configuration
-and captures are excluded from the archive. Merges to `main` automatically run the full build/test/package pipeline and publish
-a GitHub Release with the archive and checksum. Each commit gets a unique
-`build-<commit>` tag, so version bumps are not required for every merge. Releases
-are published only after all checks pass; rerunning the workflow updates the same
-commit release. Direct pushes to `main` use the same automation. PR artifacts
-remain available before merge for review.
+and captures are excluded from the archive. Merges to `main` automatically run the
+full build/test/package pipeline and publish a GitHub Release with the archive and
+checksum. Each merge increments the patch version: the first release with the new
+automation is **0.1.1**, followed by **0.1.2**, **0.1.3**, and so on. Tags use
+`v0.1.1`; the release title, archive name, and executable's `--version` agree.
+Releases are published only after all checks pass. Rerunning a commit keeps its
+version and updates the same release. Direct pushes to `main` also increment the
+patch. A merge counts once regardless of the number of commits on its PR branch.
+
+`Cargo.toml` stores the base version. CI adds the number of first-parent commits
+since that base version was introduced and updates the root package in both Cargo
+files for the build, without committing back to `main` or triggering another release.
+Dependency edits do not reset the count. To start a new minor or major series,
+explicitly update the base version in both Cargo files to a version higher than
+the latest release. A full Git checkout is required for automatic versioning.
+For the same version locally, run `python3 scripts/release-version.py --apply`
+before packaging. PR artifacts remain available before merge for review.
 
 ## Verification
 
