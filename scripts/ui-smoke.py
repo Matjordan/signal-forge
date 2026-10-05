@@ -18,12 +18,19 @@ def command(*args):
     return subprocess.check_output(['xdotool', *args], text=True).strip()
 
 def key(keys):
-    command('key', '--window', window, keys)
+    command('key', '--window', window, '--clearmodifiers', keys)
     time.sleep(.2)
 
 def snapshot(path):
+    previous = path.stat().st_mtime_ns if path.exists() else None
     key('ctrl+s')
-    return json.loads(path.read_text())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        assert process.poll() is None, log_path.read_text()
+        if path.exists() and path.stat().st_mtime_ns != previous:
+            return json.loads(path.read_text())
+        time.sleep(.05)
+    raise AssertionError('Workspace save did not complete: ' + log_path.read_text())
 
 def leaf_count(layout):
     if 'Leaf' in layout:
