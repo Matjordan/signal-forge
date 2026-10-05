@@ -260,21 +260,49 @@ impl TerminalViewer<'_> {
         } else {
             ""
         };
-        ui.add(
-            egui::Label::new(
-                RichText::new(format!(
-                    "{time}{}{chunk}  {payload}{suffix}",
-                    if direction == Direction::Rx {
-                        "RX"
-                    } else {
-                        "TX"
-                    }
-                ))
-                .monospace()
-                .color(color),
-            )
-            .wrap_mode(egui::TextWrapMode::Extend),
+        let font = egui::FontId::monospace(12.0);
+        let mut text = egui::text::LayoutJob::default();
+        text.append(
+            &time,
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color: theme::MUTED,
+                ..Default::default()
+            },
         );
+        text.append(
+            if direction == Direction::Rx {
+                "RX"
+            } else {
+                "TX"
+            },
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color,
+                ..Default::default()
+            },
+        );
+        text.append(
+            &chunk,
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color: theme::MUTED,
+                ..Default::default()
+            },
+        );
+        text.append(
+            &format!("  {payload}{suffix}"),
+            0.0,
+            egui::TextFormat {
+                font_id: font,
+                color,
+                ..Default::default()
+            },
+        );
+        ui.add(egui::Label::new(text).wrap_mode(egui::TextWrapMode::Extend));
     }
 
     pub(super) fn tool_strip(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
