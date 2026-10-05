@@ -73,7 +73,7 @@ impl BaudControl {
             match Self::parse(&self.text) {
                 Ok(value) => *baud = value,
                 Err(error) => {
-                    ui.colored_label(Color32::LIGHT_RED, error);
+                    ui.colored_label(theme::ERROR, error);
                 }
             }
         }

@@ -237,11 +237,11 @@ impl Workbench {
                         if let Some(capture) = &view.capture {
                             let status = capture.status();
                             ui.small(format!("Capture {:?} · {} chunks · {} bytes · {} dropped", status.state, status.events, status.bytes, status.dropped));
-                            if status.dropped > 0 { ui.colored_label(Color32::YELLOW, "Capture is incomplete: its queue dropped events."); }
+                            if status.dropped > 0 { ui.colored_label(theme::WARNING, "Capture is incomplete: its queue dropped events."); }
                         } else { ui.small("JSON Lines · both directions · independent of filters/pause · Ctrl+Shift+R toggles first bridge capture"); }
-                        if let Some(error) = &view.capture_error { ui.colored_label(Color32::LIGHT_RED, error); }
+                        if let Some(error) = &view.capture_error { ui.colored_label(theme::ERROR, error); }
                         let dropped = view.bridge.dropped_events();
-                        if dropped > 0 { ui.colored_label(Color32::YELLOW,format!("{dropped} monitor events dropped; forwarding remains independent")); }
+                        if dropped > 0 { ui.colored_label(theme::WARNING,format!("{dropped} monitor events dropped; forwarding remains independent")); }
                         let rows: Vec<_> = view.inspector.rows.iter().filter(|row| view.inspector.filter.accepts(row.direction)).collect();
                         let row_height = ui.text_style_height(&egui::TextStyle::Monospace) * 3.0 + ui.spacing().item_spacing.y * 2.0;
                         egui::ScrollArea::both().id_salt("bridge-traffic").max_height(150.0).auto_shrink([false,false]).stick_to_bottom(view.inspector.auto_scroll).show_rows(ui, row_height, rows.len(), |ui, range| {

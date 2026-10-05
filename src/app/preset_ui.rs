@@ -1,4 +1,4 @@
-use super::{Workbench, ACCENT};
+use super::{theme::ACCENT, Workbench};
 use eframe::egui::{self, RichText};
 use signal_forge::{
     endpoint::{ConnectionState, EndpointId},
@@ -115,7 +115,7 @@ impl Workbench {
             let mut action = None;
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .button(RichText::new(&preset.name).color(ACCENT))
+                    .button(RichText::new(&preset.name).color(theme::ACCENT))
                     .on_hover_text(format!("{}\n{}", preset.description, preset.shortcut))
                     .clicked()
                 {
@@ -242,7 +242,7 @@ impl Workbench {
         );
         if !self.library_ok {
             ui.colored_label(
-                egui::Color32::LIGHT_RED,
+                theme::ERROR,
                 "Preset file is invalid and preserved; repair it and restart.",
             );
         }
@@ -341,7 +341,7 @@ impl Workbench {
                     }
                 }
                 if let Err(error) = self.preset_draft.validate() {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    ui.colored_label(theme::ERROR, error);
                 }
                 if ui
                     .add_enabled(
