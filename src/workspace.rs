@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 pub struct SavedTerminal {
     pub settings: SerialSettings,
     pub hex: bool,
+    #[serde(default)]
+    pub receive_mode: Option<crate::terminal_display::ReceiveMode>,
+    pub delimiter: crate::terminal_display::LineDelimiter,
     pub timestamps: bool,
     pub auto_scroll: bool,
     pub encoding: Encoding,
@@ -21,6 +24,8 @@ impl Default for SavedTerminal {
         Self {
             settings: SerialSettings::default(),
             hex: false,
+            receive_mode: Some(crate::terminal_display::ReceiveMode::Line),
+            delimiter: crate::terminal_display::LineDelimiter::Auto,
             timestamps: true,
             auto_scroll: true,
             encoding: Encoding::Text,

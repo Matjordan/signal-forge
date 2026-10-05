@@ -13,6 +13,7 @@ use signal_forge::{
     send_history::{SendEntry, SendHistory},
     serial::{self, SerialEndpoint},
     traffic::{self, Direction, TrafficBus, TrafficEvent},
+    terminal_display::{self, LineDelimiter, LineDisplay, ReceiveMode},
 };
 use std::{
     collections::VecDeque,
@@ -28,10 +29,13 @@ struct Terminal {
     endpoint: Box<dyn Endpoint>,
     settings: SerialSettings,
     history: VecDeque<Arc<TrafficEvent>>,
+    rx_gap: bool,
+    rx_breaks: std::collections::HashSet<u64>,
     paused: bool,
     auto_scroll: bool,
     timestamps: bool,
-    hex: bool,
+    receive_mode: ReceiveMode,
+    lines: LineDisplay,
     input: String,
     send_history: SendHistory,
     encoding: Encoding,
@@ -51,10 +55,13 @@ impl Terminal {
             endpoint: Box::new(endpoint),
             settings,
             history: VecDeque::new(),
+            rx_gap: false,
+            rx_breaks: std::collections::HashSet::new(),
             paused: false,
             auto_scroll: true,
             timestamps: true,
-            hex: false,
+            receive_mode: ReceiveMode::Line,
+            lines: LineDisplay::default(),
             input: String::new(),
             send_history: SendHistory::default(),
             encoding: Encoding::Text,
@@ -75,10 +82,17 @@ impl Terminal {
             Direction::Tx => self.tx_bytes += event.bytes.len() as u64,
         }
         if self.paused {
+            if event.direction == Direction::Rx { self.lines.discard_pending(); self.rx_gap = true; }
             return;
         }
+        if event.direction == Direction::Rx && self.rx_gap {
+            self.lines.discard_pending();
+            self.rx_breaks.insert(event.sequence);
+            self.rx_gap = false;
+        }
+        self.lines.receive(&event);
         if self.history.len() == HISTORY_LIMIT {
-            self.history.pop_front();
+            if let Some(old) = self.history.pop_front() { self.rx_breaks.remove(&old.sequence); }
         }
         self.history.push_back(event);
     }
@@ -262,14 +276,34 @@ impl TabViewer for TerminalViewer<'_> {
                 }
             });
         });
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut tab.hex, false, "Terminal");
-            ui.selectable_value(&mut tab.hex, true, "Hex");
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Line, "Line");
+            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::RawChunks, "Raw Chunks");
+            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Hex, "Hex");
+            let previous = tab.lines.delimiter;
+            egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "receive-delimiter"))
+                .width(55.0)
+                .selected_text(format!("{:?}", tab.lines.delimiter))
+                .show_ui(ui, |ui| {
+                    for (value, label) in [(LineDelimiter::Auto, "Auto"), (LineDelimiter::Lf, "LF"), (LineDelimiter::CrLf, "CRLF"), (LineDelimiter::Cr, "CR")] {
+                        ui.selectable_value(&mut tab.lines.delimiter, value, label);
+                    }
+                });
+            if previous != tab.lines.delimiter {
+                tab.lines.clear();
+                for event in &tab.history {
+                    if tab.rx_breaks.contains(&event.sequence) { tab.lines.discard_pending(); }
+                    tab.lines.receive(event);
+                }
+            }
             ui.checkbox(&mut tab.timestamps, "Timestamps");
             ui.checkbox(&mut tab.auto_scroll, "Auto-scroll");
             ui.checkbox(&mut tab.paused, "Pause display");
             if ui.button("Clear").clicked() {
                 tab.history.clear();
+                tab.lines.clear();
+                tab.rx_breaks.clear();
+                tab.rx_gap = false;
             }
         });
         match tab.endpoint.state() {
@@ -310,17 +344,22 @@ impl TabViewer for TerminalViewer<'_> {
                     .max_height(terminal_height)
                     .min_scrolled_height(terminal_height)
                     .stick_to_bottom(tab.auto_scroll)
-                    .show_rows(ui, 18.0, tab.history.len(), |ui, range| {
+                    .show_rows(ui, 18.0, if tab.receive_mode == ReceiveMode::Line { tab.lines.len() } else { tab.history.len() }, |ui, range| {
                         for index in range {
-                            let event = &tab.history[index];
-                            let color = if event.direction == Direction::Rx {
+                            let (timestamp, direction, bytes, incomplete, truncated) = if tab.receive_mode == ReceiveMode::Line {
+                                let row = tab.lines.row(index).unwrap();
+                                (row.timestamp, row.direction, row.bytes.as_slice(), !row.complete, row.truncated)
+                            } else {
+                                let event = &tab.history[index];
+                                (event.timestamp, event.direction, event.bytes.as_ref(), false, false)
+                            };
+                            let color = if direction == Direction::Rx {
                                 Color32::from_rgb(128, 205, 141)
                             } else {
                                 Color32::from_rgb(60, 158, 246)
                             };
                             let time = if tab.timestamps {
-                                let elapsed = event
-                                    .timestamp
+                                let elapsed = timestamp
                                     .duration_since(UNIX_EPOCH)
                                     .unwrap_or_default();
                                 let seconds = elapsed.as_secs() % 86400;
@@ -334,16 +373,18 @@ impl TabViewer for TerminalViewer<'_> {
                             } else {
                                 String::new()
                             };
-                            let payload = if tab.hex {
-                                traffic::hex(&event.bytes)
-                            } else {
-                                traffic::ascii(&event.bytes)
+                            let payload = match tab.receive_mode {
+                                ReceiveMode::Hex => traffic::hex(bytes),
+                                ReceiveMode::Line if direction == Direction::Rx => terminal_display::line_text(bytes),
+                                _ => traffic::ascii(bytes),
                             };
+                            let chunk = if tab.receive_mode == ReceiveMode::Line { String::new() } else { format!(" chunk #{}", tab.history[index].sequence) };
+                            let suffix = if truncated { " … [display truncated]" } else if incomplete { " [partial]" } else { "" };
                             ui.add(
                                 egui::Label::new(
                                     RichText::new(format!(
-                                        "{time}{}  {payload}",
-                                        if event.direction == Direction::Rx {
+                                        "{time}{}{chunk}  {payload}{suffix}",
+                                        if direction == Direction::Rx {
                                             "RX"
                                         } else {
                                             "TX"
