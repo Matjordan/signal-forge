@@ -13,3 +13,5 @@ pub mod capture;
 pub mod inspector;
 
 pub mod send_history;
+
+pub mod workspace;
