@@ -235,12 +235,7 @@ impl Workbench {
                 return;
             }
         }
-        if !ctx.wants_keyboard_input()
-            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::O))
-        {
-            self.open_setup(workbench_ui::SetupKind::Port);
-            return;
-        }
+
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::S)) {
             self.save_workspace();
         }
@@ -284,6 +279,12 @@ impl Workbench {
                     }
                 }
             }
+        }
+        if !ctx.wants_keyboard_input()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::O))
+        {
+            self.open_setup(workbench_ui::SetupKind::Port);
+            return;
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::W)) {
             let location = self.selected.as_ref().and_then(|id| {

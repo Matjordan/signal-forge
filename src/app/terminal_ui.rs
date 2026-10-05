@@ -126,11 +126,13 @@ impl TerminalViewer<'_> {
             if tab.paused {
                 ui.colored_label(theme::WARNING, "Paused");
             }
-            ui.label(
-                RichText::new(format!("RX {} B · TX {} B", tab.rx_bytes, tab.tx_bytes))
-                    .small()
-                    .color(theme::MUTED),
-            );
+            if ui.available_width() >= 110.0 {
+                ui.label(
+                    RichText::new(format!("RX {} B · TX {} B", tab.rx_bytes, tab.tx_bytes))
+                        .small()
+                        .color(theme::MUTED),
+                );
+            }
         });
     }
 

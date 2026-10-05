@@ -21,7 +21,7 @@ pub const TX: Color32 = Color32::from_rgb(60, 158, 246);
 pub const CONTROL_HEIGHT: f32 = 18.0;
 pub const CANVAS_PADDING: f32 = 6.0;
 pub const TRAFFIC_ROW_HEIGHT: f32 = 18.0;
-pub const SEND_AREA_HEIGHT: f32 = 98.0;
+pub const SEND_AREA_HEIGHT: f32 = 110.0;
 const CORNER_RADIUS: u8 = 3;
 
 pub fn apply(ctx: &egui::Context) {

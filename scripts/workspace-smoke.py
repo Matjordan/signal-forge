@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
     except Exception:
         log.flush()
         print((Path(directory) / 'app.log').read_text(), flush=True)
-        subprocess.run(['import', '-window', 'root', '/tmp/workspace-failure.png'], check=False)
+        subprocess.run(['import', '-window', window, '/tmp/workspace-failure.png'], check=False)
         subprocess.run(['convert', '/tmp/workspace-failure.png', '-resize', '1280x', '-quality', '80', '/tmp/workspace-failure.jpg'], check=False)
         raise
     finally:
