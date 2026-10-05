@@ -12,8 +12,8 @@ use signal_forge::{
     send::{self, Encoding, LineEnding},
     send_history::{SendEntry, SendHistory},
     serial::{self, SerialEndpoint},
-    traffic::{self, Direction, TrafficBus, TrafficEvent},
     terminal_display::{self, LineDelimiter, LineDisplay, ReceiveMode},
+    traffic::{self, Direction, TrafficBus, TrafficEvent},
 };
 use std::{
     collections::VecDeque,
@@ -82,7 +82,10 @@ impl Terminal {
             Direction::Tx => self.tx_bytes += event.bytes.len() as u64,
         }
         if self.paused {
-            if event.direction == Direction::Rx { self.lines.discard_pending(); self.rx_gap = true; }
+            if event.direction == Direction::Rx {
+                self.lines.discard_pending();
+                self.rx_gap = true;
+            }
             return;
         }
         if event.direction == Direction::Rx && self.rx_gap {
@@ -92,7 +95,9 @@ impl Terminal {
         }
         self.lines.receive(&event);
         if self.history.len() == HISTORY_LIMIT {
-            if let Some(old) = self.history.pop_front() { self.rx_breaks.remove(&old.sequence); }
+            if let Some(old) = self.history.pop_front() {
+                self.rx_breaks.remove(&old.sequence);
+            }
         }
         self.history.push_back(event);
     }
@@ -283,16 +288,28 @@ impl TabViewer for TerminalViewer<'_> {
             let previous = tab.lines.delimiter;
             egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "receive-delimiter"))
                 .width(55.0)
-                .selected_text(match tab.lines.delimiter { LineDelimiter::Auto => "Auto", LineDelimiter::Lf => "LF", LineDelimiter::CrLf => "CRLF", LineDelimiter::Cr => "CR" })
+                .selected_text(match tab.lines.delimiter {
+                    LineDelimiter::Auto => "Auto",
+                    LineDelimiter::Lf => "LF",
+                    LineDelimiter::CrLf => "CRLF",
+                    LineDelimiter::Cr => "CR",
+                })
                 .show_ui(ui, |ui| {
-                    for (value, label) in [(LineDelimiter::Auto, "Auto"), (LineDelimiter::Lf, "LF"), (LineDelimiter::CrLf, "CRLF"), (LineDelimiter::Cr, "CR")] {
+                    for (value, label) in [
+                        (LineDelimiter::Auto, "Auto"),
+                        (LineDelimiter::Lf, "LF"),
+                        (LineDelimiter::CrLf, "CRLF"),
+                        (LineDelimiter::Cr, "CR"),
+                    ] {
                         ui.selectable_value(&mut tab.lines.delimiter, value, label);
                     }
                 });
             if previous != tab.lines.delimiter {
                 tab.lines.clear();
                 for event in &tab.history {
-                    if tab.rx_breaks.contains(&event.sequence) { tab.lines.discard_pending(); }
+                    if tab.rx_breaks.contains(&event.sequence) {
+                        tab.lines.discard_pending();
+                    }
                     tab.lines.receive(event);
                 }
             }
@@ -344,59 +361,92 @@ impl TabViewer for TerminalViewer<'_> {
                     .max_height(terminal_height)
                     .min_scrolled_height(terminal_height)
                     .stick_to_bottom(tab.auto_scroll)
-                    .show_rows(ui, 18.0, if tab.receive_mode == ReceiveMode::Line { tab.lines.len() } else { tab.history.len() }, |ui, range| {
-                        for index in range {
-                            let (timestamp, direction, bytes, incomplete, truncated) = if tab.receive_mode == ReceiveMode::Line {
-                                let row = tab.lines.row(index).unwrap();
-                                (row.timestamp, row.direction, row.bytes.as_slice(), !row.complete, row.truncated)
-                            } else {
-                                let event = &tab.history[index];
-                                (event.timestamp, event.direction, event.bytes.as_ref(), false, false)
-                            };
-                            let color = if direction == Direction::Rx {
-                                Color32::from_rgb(128, 205, 141)
-                            } else {
-                                Color32::from_rgb(60, 158, 246)
-                            };
-                            let time = if tab.timestamps {
-                                let elapsed = timestamp
-                                    .duration_since(UNIX_EPOCH)
-                                    .unwrap_or_default();
-                                let seconds = elapsed.as_secs() % 86400;
-                                format!(
-                                    "{:02}:{:02}:{:02}.{:03} ",
-                                    seconds / 3600,
-                                    (seconds / 60) % 60,
-                                    seconds % 60,
-                                    elapsed.subsec_millis()
-                                )
-                            } else {
-                                String::new()
-                            };
-                            let payload = match tab.receive_mode {
-                                ReceiveMode::Hex => traffic::hex(bytes),
-                                ReceiveMode::Line if direction == Direction::Rx => terminal_display::line_text(bytes),
-                                _ => traffic::ascii(bytes),
-                            };
-                            let chunk = if tab.receive_mode == ReceiveMode::Line { String::new() } else { format!(" chunk #{}", tab.history[index].sequence) };
-                            let suffix = if truncated { " … [display truncated]" } else if incomplete { " [partial]" } else { "" };
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(format!(
-                                        "{time}{}{chunk}  {payload}{suffix}",
-                                        if direction == Direction::Rx {
-                                            "RX"
-                                        } else {
-                                            "TX"
-                                        }
-                                    ))
-                                    .monospace()
-                                    .color(color),
-                                )
-                                .wrap_mode(egui::TextWrapMode::Extend),
-                            );
-                        }
-                    });
+                    .show_rows(
+                        ui,
+                        18.0,
+                        if tab.receive_mode == ReceiveMode::Line {
+                            tab.lines.len()
+                        } else {
+                            tab.history.len()
+                        },
+                        |ui, range| {
+                            for index in range {
+                                let (timestamp, direction, bytes, incomplete, truncated) =
+                                    if tab.receive_mode == ReceiveMode::Line {
+                                        let row = tab.lines.row(index).unwrap();
+                                        (
+                                            row.timestamp,
+                                            row.direction,
+                                            row.bytes.as_slice(),
+                                            !row.complete,
+                                            row.truncated,
+                                        )
+                                    } else {
+                                        let event = &tab.history[index];
+                                        (
+                                            event.timestamp,
+                                            event.direction,
+                                            event.bytes.as_ref(),
+                                            false,
+                                            false,
+                                        )
+                                    };
+                                let color = if direction == Direction::Rx {
+                                    Color32::from_rgb(128, 205, 141)
+                                } else {
+                                    Color32::from_rgb(60, 158, 246)
+                                };
+                                let time = if tab.timestamps {
+                                    let elapsed =
+                                        timestamp.duration_since(UNIX_EPOCH).unwrap_or_default();
+                                    let seconds = elapsed.as_secs() % 86400;
+                                    format!(
+                                        "{:02}:{:02}:{:02}.{:03} ",
+                                        seconds / 3600,
+                                        (seconds / 60) % 60,
+                                        seconds % 60,
+                                        elapsed.subsec_millis()
+                                    )
+                                } else {
+                                    String::new()
+                                };
+                                let payload = match tab.receive_mode {
+                                    ReceiveMode::Hex => traffic::hex(bytes),
+                                    ReceiveMode::Line if direction == Direction::Rx => {
+                                        terminal_display::line_text(bytes)
+                                    }
+                                    _ => traffic::ascii(bytes),
+                                };
+                                let chunk = if tab.receive_mode == ReceiveMode::Line {
+                                    String::new()
+                                } else {
+                                    format!(" chunk #{}", tab.history[index].sequence)
+                                };
+                                let suffix = if truncated {
+                                    " … [display truncated]"
+                                } else if incomplete {
+                                    " [partial]"
+                                } else {
+                                    ""
+                                };
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(format!(
+                                            "{time}{}{chunk}  {payload}{suffix}",
+                                            if direction == Direction::Rx {
+                                                "RX"
+                                            } else {
+                                                "TX"
+                                            }
+                                        ))
+                                        .monospace()
+                                        .color(color),
+                                    )
+                                    .wrap_mode(egui::TextWrapMode::Extend),
+                                );
+                            }
+                        },
+                    );
             });
         ui.separator();
         ui.horizontal(|ui| {
