@@ -1,4 +1,4 @@
-use super::{Workbench, ACCENT};
+use super::{theme, Workbench};
 use eframe::egui::{self, RichText};
 use signal_forge::{
     endpoint::{ConnectionState, EndpointId},
@@ -23,7 +23,7 @@ impl Workbench {
             Err(error) => self.error = Some(format!("Presets: {error}")),
         }
     }
-    fn dispatch_preset(&mut self, preset: Preset) {
+    pub(super) fn dispatch_preset(&mut self, preset: Preset) {
         let id = match &preset.target {
             PresetTarget::Selected => self.selected.clone(),
             PresetTarget::Endpoint(id) => Some(EndpointId(id.clone())),
@@ -115,7 +115,7 @@ impl Workbench {
             let mut action = None;
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .button(RichText::new(&preset.name).color(ACCENT))
+                    .button(RichText::new(&preset.name).color(theme::ACCENT))
                     .on_hover_text(format!("{}\n{}", preset.description, preset.shortcut))
                     .clicked()
                 {
@@ -242,7 +242,7 @@ impl Workbench {
         );
         if !self.library_ok {
             ui.colored_label(
-                egui::Color32::LIGHT_RED,
+                theme::ERROR,
                 "Preset file is invalid and preserved; repair it and restart.",
             );
         }
@@ -341,7 +341,7 @@ impl Workbench {
                     }
                 }
                 if let Err(error) = self.preset_draft.validate() {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    ui.colored_label(theme::ERROR, error);
                 }
                 if ui
                     .add_enabled(
@@ -364,7 +364,10 @@ impl Workbench {
         self.preset_editor_open = open && !saved;
     }
     pub(super) fn preset_shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.wants_keyboard_input() || self.preset_editor_open {
+        if ctx.wants_keyboard_input()
+            || self.preset_editor_open
+            || ctx.input(|i| i.modifiers.alt || i.modifiers.shift)
+        {
             return;
         }
         let keys = [
