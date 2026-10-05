@@ -234,6 +234,8 @@ pub fn prepare(
         .as_file()
         .set_permissions(metadata.permissions())
         .map_err(|e| e.to_string())?;
+    // Persist the final executable mode as well as its bytes before publishing it.
+    binary.as_file().sync_all().map_err(|e| e.to_string())?;
     let binary = binary.into_temp_path();
     validate_binary(&binary, &offer.version)?;
     Ok(PreparedUpdate {
