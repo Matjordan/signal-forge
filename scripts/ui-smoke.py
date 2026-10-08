@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import tty
+from gui_smoke_support import window_for
 
 pairs = [pty.openpty() for _ in range(4)]
 for master, slave in pairs:
@@ -47,17 +48,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-ui-') as directory:
     with log_path.open('w') as log:
         process = subprocess.Popen(args, env=dict(os.environ, XDG_CONFIG_HOME=directory), stderr=log)
         try:
-            deadline = time.monotonic() + 10
-            window = None
-            while time.monotonic() < deadline:
-                assert process.poll() is None, log_path.read_text()
-                result = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '^Signal Forge$'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    window = result.stdout.splitlines()[0]
-                    break
-                time.sleep(.1)
-            assert window, 'No UI window'
-            command('windowfocus', '--sync', window)
+            window = window_for(process)
             time.sleep(.5)
             for index, (master, _) in enumerate(pairs):
                 os.write(master, f'Device {index + 1}: ready at 19200\r\n'.encode())

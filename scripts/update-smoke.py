@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 import tty
+from gui_smoke_support import window_for
 
 binary = 'target/debug/signal-forge'
 version = subprocess.check_output([binary, '--version'], text=True).strip().removeprefix('Signal Forge ')
@@ -47,15 +48,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-update-') as directory:
             message += chunk
         assert message == f'READY {version}\n'.encode(), message
         assert process.poll() is None, log_path.read_text()
-        deadline = time.monotonic() + 5
-        window = None
-        while time.monotonic() < deadline:
-            found = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '^Signal Forge$'], capture_output=True, text=True)
-            if found.returncode == 0:
-                window = found.stdout.splitlines()[0]
-                break
-            time.sleep(.1)
-        assert window, 'Ready signal arrived without a visible workbench'
+        window = window_for(process)
         assert not select.select([master], [], [], .3)[0], 'Restart sent serial data'
         assert 'Opened ' not in log_path.read_text(), 'Restart reconnected a device'
         # Bypass xprop's icon formatter and its default property-length limit.
@@ -68,7 +61,6 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-update-') as directory:
         assert any(pixel >> 24 for pixel in icon_values[2:]), 'Application window icon is transparent'
         window_class = subprocess.check_output(['xprop', '-id', window, 'WM_CLASS'], text=True)
         assert 'signal-forge' in window_class, window_class
-        subprocess.run(['xdotool', 'windowfocus', '--sync', window], check=True)
         subprocess.run(['xdotool', 'key', '--window', window, 'ctrl+q'], check=True)
         assert process.wait(timeout=5) == 0
         assert json.loads(workspace_path.read_text()) == workspace

@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 import tty
+from gui_smoke_support import window_for
 
 
 def read_bytes(master, expected):
@@ -50,8 +51,7 @@ with tempfile.TemporaryDirectory(prefix="signal-forge-smoke-") as config_dir:
             time.sleep(0.1)
         # Loading profiles must never transmit automatically.
         assert not select.select([master for master, _ in pairs], [], [], 0.1)[0]
-        window = subprocess.check_output(["xdotool", "search", "--name", "^Signal Forge$"]).decode().splitlines()[0]
-        subprocess.run(["xdotool", "windowfocus", "--sync", window], check=True)
+        window = window_for(process)
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+1"], check=True)
         read_bytes(pairs[1][0], b"STATUS\r\n")
         subprocess.run(["xdotool", "key", "--window", window, "ctrl+2"], check=True)
