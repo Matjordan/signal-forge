@@ -142,10 +142,10 @@ need a manual install of the first release containing this feature.
 ## Linux package
 
 Each passing CI run builds and uploads **signal-forge-linux-x86_64** with a release
-binary, desktop launcher, installer, documentation, linked-library list, and SHA-256
+binary, desktop launcher, eight icon sizes, installer/uninstaller, documentation, linked-library list, and SHA-256
 checksum. Download it from the repository's **Actions** run, unzip the artifact,
-verify `sha256sum -c *.sha256`, unpack the tarball, and run `bash install.sh` (requires Python 3).
-The default installation is `~/.local`; an optional path argument changes it.
+verify `sha256sum -c *.sha256`, unpack the tarball, and run `bash install.sh`.
+The default installation is `~/.local`; an optional path argument changes it. The installer creates the launcher and freedesktop hicolor icons automatically, refreshes desktop/icon caches when those utilities are available, and records its owned assets in `share/signal-forge/install-manifest.json`. Uninstall with `bash ~/.local/share/signal-forge/uninstall.sh` (use your chosen prefix for a custom install); user settings, presets, captures, and unrelated files are preserved.
 You can also run the included `bin/signal-forge` directly. The package targets
 Ubuntu 24.04 x86_64 or compatible newer glibc Linux with X11/Wayland and OpenGL.
 
@@ -181,3 +181,5 @@ without opening or transmitting, recovery, and graceful cleanup. UI checks exerc
 is extracted, checksum-verified, installed into a temporary prefix, and launched
 with `--help` in CI. Physical adapters and electrical flow/parity behavior require
 a local bench and are not claimed as PTY test coverage.
+
+Application icons are generated from [the canonical artwork](assets/signal-forge-source.png) with `python3 scripts/generate-icons.py`. The window embeds its icon and uses the `signal-forge` application ID to match the launcher on Linux. Self-update installs the verified release's launcher, icons, documentation and uninstall helper alongside the executable, with rollback of both executable and assets on a failed restart. Old executable-only installs acquire the embedded launcher/icons on first launch after updating. Standalone binaries outside a recognized installation do not create desktop files.

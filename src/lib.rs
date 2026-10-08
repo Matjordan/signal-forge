@@ -19,3 +19,5 @@ pub mod workspace;
 pub mod terminal_display;
 
 pub mod updater;
+
+pub mod desktop;

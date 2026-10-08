@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import tty
+from gui_smoke_support import window_for as ready_window
 
 pairs = [pty.openpty(), pty.openpty()]
 for master, slave in pairs:
@@ -15,18 +16,9 @@ for master, slave in pairs:
     os.set_blocking(master, False)
 
 def window_for(process):
-    deadline = time.monotonic() + 8
-    while time.monotonic() < deadline:
-        assert process.poll() is None, process.returncode
-        result = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '^Signal Forge$'], capture_output=True, text=True)
-        if result.returncode == 0:
-            window = result.stdout.splitlines()[0]
-            focused = subprocess.run(['xdotool', 'windowfocus', '--sync', window], capture_output=True)
-            if focused.returncode == 0:
-                time.sleep(.5)
-                return window
-        time.sleep(.1)
-    raise AssertionError('No application window')
+    window = ready_window(process)
+    time.sleep(.5)
+    return window
 
 def key(window, keys):
     subprocess.run(['xdotool', 'key', '--window', window, keys], check=True)
