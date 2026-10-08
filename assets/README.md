@@ -1,6 +1,6 @@
 # Signal Forge icon
 
-`signal-forge-source.png` is the canonical 1280×1280 RGBA artwork, created for
+`signal-forge-source.png` is the canonical 1254×1254 RGBA artwork, created for
 Signal Forge. Its navy badge and cyan/amber serial waveform are intended to remain
 recognizable at small launcher sizes. Keep this source; regenerate derived icons
 with `python3 scripts/generate-icons.py` (requires ImageMagick).
