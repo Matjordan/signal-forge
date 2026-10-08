@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import socket
 import subprocess
@@ -57,8 +58,14 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-update-') as directory:
         assert window, 'Ready signal arrived without a visible workbench'
         assert not select.select([master], [], [], .3)[0], 'Restart sent serial data'
         assert 'Opened ' not in log_path.read_text(), 'Restart reconnected a device'
-        icon_property = subprocess.check_output(['xprop', '-id', window, '_NET_WM_ICON'], text=True)
-        assert '256 x 256' in icon_property, 'Application window icon was not installed'
+        # Bypass xprop's icon formatter and its default property-length limit.
+        icon_property = subprocess.check_output(
+            ['xprop', '-id', window, '-len', str(8 * (2 + 256 * 256)),
+             '-f', '_NET_WM_ICON', '32c', '_NET_WM_ICON'], text=True)
+        icon_values = [int(value) for value in re.findall(r'\d+', icon_property.partition('=')[2])]
+        assert icon_values[:2] == [256, 256], 'Application window icon has incorrect dimensions'
+        assert len(icon_values) == 2 + 256 * 256, 'Application window icon has incomplete pixel data'
+        assert any(pixel >> 24 for pixel in icon_values[2:]), 'Application window icon is transparent'
         window_class = subprocess.check_output(['xprop', '-id', window, 'WM_CLASS'], text=True)
         assert 'signal-forge' in window_class, window_class
         subprocess.run(['xdotool', 'windowfocus', '--sync', window], check=True)
