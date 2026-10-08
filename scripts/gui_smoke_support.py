@@ -3,6 +3,14 @@ import subprocess
 import time
 
 
+def click(window, x, y):
+    """Let egui observe pointer movement before delivering the mouse click."""
+    subprocess.run(['xdotool', 'mousemove', '--window', window, str(x), str(y)], check=True)
+    time.sleep(.1)
+    subprocess.run(['xdotool', 'click', '1'], check=True)
+    time.sleep(.1)
+
+
 def window_for(process, timeout=10):
     """Wait for this process's mapped window and confirmed keyboard focus."""
     deadline = time.monotonic() + timeout

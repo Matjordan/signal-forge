@@ -6,6 +6,7 @@ pub(super) enum TerminalTool {
     Send,
     Repeat,
     Presets,
+    Files,
 }
 
 impl TerminalViewer<'_> {
@@ -19,7 +20,10 @@ impl TerminalViewer<'_> {
     pub(super) fn serial_settings(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         ui.push_id(tab.endpoint.id().0.clone(), |ui| {
             ui.horizontal_wrapped(|ui| {
-                let connected = tab.endpoint.state() == ConnectionState::Connected;
+                let connected = matches!(
+                    tab.endpoint.state(),
+                    ConnectionState::Connected | ConnectionState::Connecting
+                );
                 ui.add_enabled_ui(!connected, |ui| {
                     tab.baud_control.ui(ui, &mut tab.settings.baud);
                     egui::ComboBox::from_id_salt("pane_bits")
@@ -133,9 +137,10 @@ impl TerminalViewer<'_> {
 
     pub(super) fn connection_status(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         ui.horizontal_wrapped(|ui| {
-            let connected = tab.endpoint.state() == ConnectionState::Connected;
+            let connected = matches!(tab.endpoint.state(), ConnectionState::Connected | ConnectionState::Connecting);
             let (state, color) = match tab.endpoint.state() {
                 ConnectionState::Connected => ("Connected", theme::CONNECTED),
+                ConnectionState::Connecting => ("Connecting…", theme::MUTED),
                 ConnectionState::Disconnected => ("Disconnected", theme::MUTED),
                 ConnectionState::Fault(_) => ("Fault", theme::ERROR),
             };
@@ -156,12 +161,12 @@ impl TerminalViewer<'_> {
                         tab.error = Some(error.into());
                     } else {
                         tab.endpoint.disconnect();
-                        match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
+                        match signal_forge::endpoint::open(&tab.settings, self.bus.clone()) {
                             Ok(endpoint) => {
                                 tab.active_framing = SerialFraming::from(&tab.settings);
                                 tab.rx_gap = true;
                                 tab.lines.discard_pending();
-                                tab.endpoint = Box::new(endpoint);
+                                tab.endpoint = endpoint;
                                 tab.error = None;
                             }
                             Err(error) => tab.error = Some(error.to_string()),
@@ -176,6 +181,7 @@ impl TerminalViewer<'_> {
             TerminalTool::Send => 0.0,
             TerminalTool::Repeat => 64.0,
             TerminalTool::Presets => 80.0,
+            TerminalTool::Files => 130.0,
         };
         let terminal_height = (ui.available_height() - theme::SEND_AREA_HEIGHT - extra).max(40.0);
         theme::canvas_frame().show(ui, |ui| {
@@ -318,6 +324,7 @@ impl TerminalViewer<'_> {
                 if active { "Repeat (active)" } else { "Repeat" },
             );
             ui.selectable_value(&mut tab.tool, TerminalTool::Presets, "Presets");
+            ui.selectable_value(&mut tab.tool, TerminalTool::Files, "Files / RX");
             if active && ui.add(theme::danger_button("Stop")).clicked() {
                 tab.stop_repeat();
             }
@@ -474,7 +481,72 @@ impl TerminalViewer<'_> {
         }
     }
 
+    pub(super) fn files_panel(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        if tab.endpoint.file_send_active() {
+            ui.label("Sending file… Disconnect to cancel.");
+        }
+        ui.label("Send binary file (unchanged bytes)");
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut tab.file_path);
+            if ui
+                .add_enabled(
+                    tab.endpoint.state() == ConnectionState::Connected
+                        && !tab.endpoint.file_send_active(),
+                    egui::Button::new("Send file"),
+                )
+                .clicked()
+            {
+                tab.error = tab
+                    .endpoint
+                    .send_file(std::path::Path::new(&tab.file_path))
+                    .err()
+                    .map(|e| e.to_string());
+            }
+        });
+        ui.label("Record raw RX to a new file");
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut tab.recording_path);
+            if ui
+                .add_enabled(
+                    tab.endpoint.state() == ConnectionState::Connected
+                        && !tab
+                            .recording
+                            .as_ref()
+                            .is_some_and(|recording| recording.is_active()),
+                    egui::Button::new("Record RX"),
+                )
+                .clicked()
+            {
+                if let Some(recording) = &mut tab.recording {
+                    recording.finish();
+                }
+                match signal_forge::raw_recording::RawRecording::start(
+                    std::path::Path::new(&tab.recording_path),
+                    tab.endpoint.id().clone(),
+                    self.bus,
+                ) {
+                    Ok(recording) => {
+                        tab.recording = Some(recording);
+                        tab.error = None;
+                    }
+                    Err(error) => tab.error = Some(error),
+                }
+            }
+            if ui.button("Stop recording").clicked() {
+                if let Some(recording) = &tab.recording {
+                    recording.stop();
+                }
+            }
+        });
+        if let Some(recording) = &tab.recording {
+            ui.label(recording.status());
+        }
+    }
+
     pub(super) fn status_footer(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        if let ConnectionState::Fault(error) = tab.endpoint.state() {
+            ui.colored_label(theme::ERROR, error);
+        }
         if let Some(error) = &tab.error {
             ui.colored_label(theme::ERROR, format!("{}: {error}", tab.settings.path));
         }

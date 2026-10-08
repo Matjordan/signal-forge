@@ -18,7 +18,7 @@ use signal_forge::{
     repeat::{RepeatHandle, RepeatSpec},
     send::{self, Encoding, LineEnding},
     send_history::{SendEntry, SendHistory},
-    serial::{self, SerialEndpoint},
+    serial,
     terminal_display::{self, LineDelimiter, LineDisplay, ReceiveMode, SerialFraming},
     traffic::{self, Direction, TrafficBus, TrafficEvent},
 };
@@ -56,6 +56,9 @@ struct Terminal {
     repeat_interval_ms: u64,
     repeat_count: u64,
     continuous: bool,
+    file_path: String,
+    recording_path: String,
+    recording: Option<signal_forge::raw_recording::RawRecording>,
     rx_bytes: u64,
     tx_bytes: u64,
 }
@@ -87,6 +90,9 @@ impl Terminal {
             repeat_interval_ms: 1000,
             repeat_count: 10,
             continuous: false,
+            file_path: String::new(),
+            recording_path: String::new(),
+            recording: None,
             rx_bytes: 0,
             tx_bytes: 0,
         }
@@ -239,6 +245,7 @@ impl TabViewer for TerminalViewer<'_> {
                     terminal_ui::TerminalTool::Send => {}
                     terminal_ui::TerminalTool::Repeat => self.repeat_panel(ui, tab),
                     terminal_ui::TerminalTool::Presets => self.preset_panel(ui, tab),
+                    terminal_ui::TerminalTool::Files => self.files_panel(ui, tab),
                 }
                 self.status_footer(ui, tab);
             });
@@ -372,16 +379,19 @@ impl Workbench {
             .iter_all_tabs_mut()
             .find(|(_, tab)| tab.settings.path == self.settings.path)
         {
-            if tab.endpoint.state() == ConnectionState::Connected {
+            if matches!(
+                tab.endpoint.state(),
+                ConnectionState::Connected | ConnectionState::Connecting
+            ) {
                 self.error = Some(format!("{} already connected", self.settings.path));
                 return;
             }
             tab.settings = self.settings.clone();
             tab.baud_control = BaudControl::new(tab.settings.baud);
             tab.endpoint.disconnect();
-            match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
+            match signal_forge::endpoint::open(&tab.settings, self.bus.clone()) {
                 Ok(endpoint) => {
-                    tab.endpoint = Box::new(endpoint);
+                    tab.endpoint = endpoint;
                     tab.error = None;
                     self.selected = Some(tab.endpoint.id().clone());
                     self.error = None;
@@ -390,7 +400,7 @@ impl Workbench {
             }
             return;
         }
-        match SerialEndpoint::open(&self.settings, self.bus.clone()) {
+        match signal_forge::endpoint::open(&self.settings, self.bus.clone()) {
             Ok(endpoint) => {
                 self.config.ports.retain(|s| s.path != self.settings.path);
                 self.config.ports.push(self.settings.clone());
@@ -418,6 +428,16 @@ impl eframe::App for Workbench {
             for (_, tab) in self.dock.iter_all_tabs_mut() {
                 if tab.endpoint.id() == &event.endpoint {
                     tab.receive(event.clone());
+                }
+            }
+        }
+        for (_, tab) in self.dock.iter_all_tabs() {
+            if !matches!(
+                tab.endpoint.state(),
+                ConnectionState::Connected | ConnectionState::Connecting
+            ) {
+                if let Some(recording) = &tab.recording {
+                    recording.stop();
                 }
             }
         }

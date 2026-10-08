@@ -261,12 +261,12 @@ impl Workbench {
                         } else {
                             tab.stop_repeat();
                             tab.endpoint.disconnect();
-                            match SerialEndpoint::open(&tab.settings, self.bus.clone()) {
+                            match signal_forge::endpoint::open(&tab.settings, self.bus.clone()) {
                                 Ok(endpoint) => {
                                     tab.active_framing = SerialFraming::from(&tab.settings);
                                     tab.rx_gap = true;
                                     tab.lines.discard_pending();
-                                    tab.endpoint = Box::new(endpoint);
+                                    tab.endpoint = endpoint;
                                     tab.error = None;
                                 }
                                 Err(error) => tab.error = Some(error.to_string()),

@@ -38,6 +38,8 @@ impl Default for SerialSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceConfig {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub remote_hosts: Vec<crate::ssh_serial::SavedSshHost>,
     pub version: u32,
     pub ports: Vec<SerialSettings>,
     pub layout: Option<crate::workspace::Layout>,
@@ -49,6 +51,7 @@ impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self {
             version: 2,
+            remote_hosts: Vec::new(),
             ports: Vec::new(),
             layout: None,
             windows: Vec::new(),
@@ -102,6 +105,20 @@ impl WorkspaceConfig {
     pub fn validate(&self) -> Result<(), String> {
         if self.version != 2 || self.ports.len() > 256 || self.windows.len() > 16 {
             return Err("Invalid workspace version or size".into());
+        }
+        if self.remote_hosts.len() > 128 {
+            return Err("Too many saved SSH hosts".into());
+        }
+        let mut host_names = std::collections::HashSet::new();
+        for host in &self.remote_hosts {
+            host.connection.validate().map_err(|e| e.to_string())?;
+            if host.name.is_empty()
+                || host.name.len() > 256
+                || host.name.contains(['\0', '\n', '\r'])
+                || !host_names.insert(&host.name)
+            {
+                return Err("Invalid or duplicate SSH host display name".into());
+            }
         }
         for port in &self.ports {
             port.validate()?;
@@ -184,6 +201,9 @@ impl WorkspaceConfig {
 
 impl SerialSettings {
     pub fn validate(&self) -> Result<(), String> {
+        if self.path.starts_with("ssh://") {
+            crate::ssh_serial::SshHost::parse(&self.path).map_err(|e| e.to_string())?;
+        }
         if self.path.is_empty()
             || self.path.len() > 4096
             || self.path.contains('\0')
