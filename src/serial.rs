@@ -6,7 +6,7 @@ use crate::{
     traffic::{Direction, TrafficBus},
 };
 use std::{
-    io::Read,
+    io::{Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, SyncSender, TryRecvError, TrySendError},
@@ -29,6 +29,29 @@ pub fn discover() -> Result<Vec<String>, EndpointError> {
 enum Command {
     Send(Vec<u8>),
     Repeat(RepeatJob),
+    File(std::fs::File),
+}
+
+pub(crate) trait TransportReader: Read + Send {
+    fn set_read_timeout(&mut self, timeout: Duration) -> Result<(), EndpointError>;
+}
+struct LocalReader(Box<dyn serialport::SerialPort>);
+impl Read for LocalReader {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(bytes)
+    }
+}
+impl TransportReader for LocalReader {
+    fn set_read_timeout(&mut self, timeout: Duration) -> Result<(), EndpointError> {
+        self.0
+            .set_timeout(timeout)
+            .map_err(|e| EndpointError::Io(e.to_string()))
+    }
+}
+impl TransportReader for std::process::ChildStdout {
+    fn set_read_timeout(&mut self, _timeout: Duration) -> Result<(), EndpointError> {
+        Ok(())
+    }
 }
 
 pub struct SerialEndpoint {
@@ -40,6 +63,7 @@ pub struct SerialEndpoint {
     worker: Option<JoinHandle<()>>,
     bridge: BridgePort,
     writer: Arc<SerialWriter>,
+    file_active: Arc<AtomicBool>,
 }
 impl SerialEndpoint {
     pub fn open(settings: &SerialSettings, bus: TrafficBus) -> Result<Self, EndpointError> {
@@ -76,14 +100,28 @@ impl SerialEndpoint {
             .timeout(Duration::from_millis(20))
             .open()
             .map_err(|e| EndpointError::Io(format!("{}: {e}", settings.path)))?;
-        let id = EndpointId(format!("serial:{}", settings.path));
-        let state = Arc::new(Mutex::new(ConnectionState::Connected));
-        let stop = Arc::new(AtomicBool::new(false));
-        let mut reader = port
+        let reader = port
             .try_clone()
             .map_err(|e| EndpointError::Io(e.to_string()))?;
+        Self::from_io(
+            EndpointId(format!("serial:{}", settings.path)),
+            settings.path.clone(),
+            LocalReader(reader),
+            port,
+            bus,
+        )
+    }
+    pub(crate) fn from_io(
+        id: EndpointId,
+        name: String,
+        mut reader: impl TransportReader + 'static,
+        port: impl Write + Send + 'static,
+        bus: TrafficBus,
+    ) -> Result<Self, EndpointError> {
+        let state = Arc::new(Mutex::new(ConnectionState::Connected));
+        let stop = Arc::new(AtomicBool::new(false));
         let writer = Arc::new(SerialWriter {
-            port: Mutex::new(Some(port)),
+            port: Mutex::new(Some(Box::new(port))),
             state: state.clone(),
             stop: stop.clone(),
             bus: bus.clone(),
@@ -96,11 +134,14 @@ impl SerialEndpoint {
         let worker_state = state.clone();
         let worker_stop = stop.clone();
         let worker_id = id.clone();
+        let file_active = Arc::new(AtomicBool::new(false));
+        let worker_file_active = file_active.clone();
         let worker = thread::Builder::new()
-            .name(format!("serial:{}", settings.path))
+            .name(id.0.clone())
             .spawn(move || {
                 let mut buffer = [0; 4096];
                 let mut repeat: Option<RepeatJob> = None;
+                let mut file: Option<std::fs::File> = None;
                 let result = (|| -> Result<(), EndpointError> {
                     while !worker_stop.load(Ordering::Acquire) {
                         // Bound command processing so manual sends cannot starve RX or timers.
@@ -114,6 +155,10 @@ impl SerialEndpoint {
                                         return Ok(());
                                     }
                                 }
+                                Ok(Command::File(opened)) => {
+                                    repeat = None;
+                                    file = Some(opened);
+                                }
                                 Ok(Command::Repeat(job)) => {
                                     if job.is_active() {
                                         repeat = Some(job);
@@ -125,6 +170,17 @@ impl SerialEndpoint {
                         }
                         if worker_stop.load(Ordering::Acquire) {
                             break;
+                        }
+                        if let Some(opened) = &mut file {
+                            let count = opened
+                                .read(&mut buffer)
+                                .map_err(|e| EndpointError::Io(format!("Send file: {e}")))?;
+                            if count == 0 {
+                                file = None;
+                                worker_file_active.store(false, Ordering::Release);
+                            } else if !worker_writer.write(&buffer[..count], &worker_stop)? {
+                                return Ok(());
+                            }
                         }
                         if let Some(job) = &mut repeat {
                             job.poll(Instant::now(), |bytes, cancelled| {
@@ -141,9 +197,7 @@ impl SerialEndpoint {
                             .map(|job| job.time_until_next(Instant::now()))
                             .unwrap_or(Duration::from_millis(20))
                             .clamp(Duration::from_millis(1), Duration::from_millis(20));
-                        reader
-                            .set_timeout(timeout)
-                            .map_err(|e| EndpointError::Io(e.to_string()))?;
+                        reader.set_read_timeout(timeout)?;
                         match reader.read(&mut buffer) {
                             Ok(0) => return Err(EndpointError::Io("serial device closed".into())),
                             Ok(count) => {
@@ -156,7 +210,10 @@ impl SerialEndpoint {
                                     std::io::ErrorKind::TimedOut
                                         | std::io::ErrorKind::WouldBlock
                                         | std::io::ErrorKind::Interrupted
-                                ) => {}
+                                ) =>
+                            {
+                                thread::sleep(Duration::from_millis(1));
+                            }
                             Err(e) => return Err(EndpointError::Io(e.to_string())),
                         }
                     }
@@ -167,6 +224,7 @@ impl SerialEndpoint {
                 }
                 // Active and still-queued repeat commands cancel when their owners drop.
                 drop(repeat);
+                worker_file_active.store(false, Ordering::Release);
                 let next = match result {
                     Ok(()) => {
                         let state = worker_state
@@ -181,7 +239,15 @@ impl SerialEndpoint {
                     }
                     Err(error) => {
                         log::error!("{}: {error}", worker_id.0);
-                        ConnectionState::Fault(error.to_string())
+                        let state = worker_state
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .clone();
+                        if matches!(state, ConnectionState::Fault(_)) {
+                            state
+                        } else {
+                            ConnectionState::Fault(error.to_string())
+                        }
                     }
                 };
                 worker_writer.close();
@@ -189,20 +255,30 @@ impl SerialEndpoint {
                 *worker_state.lock().unwrap_or_else(|e| e.into_inner()) = next;
             })
             .map_err(|e| EndpointError::Io(e.to_string()))?;
-        log::info!("Opened {} at {} baud", settings.path, settings.baud);
+        log::info!("Opened {name}");
         Ok(Self {
             id,
-            name: settings.path.clone(),
+            name,
             state,
             tx,
             stop,
             worker: Some(worker),
             bridge,
             writer,
+            file_active,
         })
     }
 }
+impl SerialEndpoint {
+    pub(crate) fn shared_state(&self) -> Arc<Mutex<ConnectionState>> {
+        self.state.clone()
+    }
+}
+
 impl Endpoint for SerialEndpoint {
+    fn file_send_active(&self) -> bool {
+        self.file_active.load(Ordering::Acquire)
+    }
     fn id(&self) -> &EndpointId {
         &self.id
     }
@@ -213,6 +289,11 @@ impl Endpoint for SerialEndpoint {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     fn send(&self, bytes: Vec<u8>) -> Result<(), EndpointError> {
+        if self.file_active.load(Ordering::Acquire) {
+            return Err(EndpointError::Io(
+                "Wait for the active file send to finish".into(),
+            ));
+        }
         if self.state() != ConnectionState::Connected || self.stop.load(Ordering::Acquire) {
             return Err(EndpointError::Disconnected);
         }
@@ -226,11 +307,47 @@ impl Endpoint for SerialEndpoint {
             TrySendError::Disconnected(_) => EndpointError::Disconnected,
         })
     }
+    fn send_file(&self, path: &std::path::Path) -> Result<(), EndpointError> {
+        if self.state() != ConnectionState::Connected {
+            return Err(EndpointError::Disconnected);
+        }
+        use std::os::unix::fs::OpenOptionsExt;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|e| EndpointError::Io(format!("Send file: {e}")))?;
+        if !file
+            .metadata()
+            .map_err(|e| EndpointError::Io(e.to_string()))?
+            .is_file()
+        {
+            return Err(EndpointError::Io(
+                "Send file requires a regular file".into(),
+            ));
+        }
+        if self.file_active.swap(true, Ordering::AcqRel) {
+            return Err(EndpointError::Io("A file send is already active".into()));
+        }
+        if let Err(error) = self.tx.try_send(Command::File(file)) {
+            self.file_active.store(false, Ordering::Release);
+            return Err(match error {
+                TrySendError::Full(_) => EndpointError::QueueFull,
+                TrySendError::Disconnected(_) => EndpointError::Disconnected,
+            });
+        }
+        Ok(())
+    }
     fn start_repeat(
         &self,
         bytes: Vec<u8>,
         spec: RepeatSpec,
     ) -> Result<RepeatHandle, EndpointError> {
+        if self.file_active.load(Ordering::Acquire) {
+            return Err(EndpointError::Io(
+                "Wait for the active file send to finish".into(),
+            ));
+        }
         if self.state() != ConnectionState::Connected || self.stop.load(Ordering::Acquire) {
             return Err(EndpointError::Disconnected);
         }
@@ -268,7 +385,7 @@ impl Drop for SerialEndpoint {
 }
 
 fn write_payload(
-    port: &mut dyn serialport::SerialPort,
+    port: &mut dyn Write,
     bytes: &[u8],
     stop: &AtomicBool,
     cancelled: Option<&AtomicBool>,
@@ -289,6 +406,9 @@ fn write_payload(
                 offset += count;
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(1))
+            }
             Err(e) => return Err(EndpointError::Io(e.to_string())),
         }
     }
@@ -296,7 +416,7 @@ fn write_payload(
 }
 
 struct SerialWriter {
-    port: Mutex<Option<Box<dyn serialport::SerialPort>>>,
+    port: Mutex<Option<Box<dyn Write + Send>>>,
     state: Arc<Mutex<ConnectionState>>,
     stop: Arc<AtomicBool>,
     bus: TrafficBus,

@@ -18,6 +18,12 @@ pub(super) struct SetupDialog {
     a: Option<EndpointId>,
     b: Option<EndpointId>,
     workspace_path: String,
+    remote: bool,
+    host_name: String,
+    host: signal_forge::ssh_serial::SshHost,
+    device: String,
+    discovery: Option<signal_forge::ssh_serial::Discovery>,
+    devices: Vec<String>,
     error: Option<String>,
 }
 
@@ -44,7 +50,25 @@ impl Workbench {
             .filter(|(_, tab)| tab.endpoint.state() == ConnectionState::Connected)
             .map(|(_, tab)| tab.endpoint.id().clone())
             .collect();
+        let parsed = signal_forge::ssh_serial::SshHost::parse(&self.settings.path).ok();
         self.setup = Some(SetupDialog {
+            remote: parsed.is_some(),
+            host_name: parsed
+                .as_ref()
+                .map(|p| p.0.host.clone())
+                .unwrap_or_default(),
+            host: parsed.as_ref().map(|p| p.0.clone()).unwrap_or(
+                signal_forge::ssh_serial::SshHost {
+                    host: String::new(),
+                    username: None,
+                    port: None,
+                },
+            ),
+            device: parsed
+                .map(|p| p.1)
+                .unwrap_or_else(|| self.settings.path.clone()),
+            discovery: None,
+            devices: Vec::new(),
             kind,
             settings: self.settings.clone(),
             baud: BaudControl::new(self.settings.baud),
@@ -199,6 +223,7 @@ impl Workbench {
                         for (id, path, state, summary) in &entries {
                             let color = match state {
                                 ConnectionState::Connected => theme::CONNECTED,
+                                ConnectionState::Connecting => theme::MUTED,
                                 ConnectionState::Disconnected => theme::MUTED,
                                 ConnectionState::Fault(_) => theme::ERROR,
                             };
@@ -246,6 +271,20 @@ impl Workbench {
                                                         });
                                                     dialog.baud =
                                                         BaudControl::new(dialog.settings.baud);
+                                                    dialog.remote =
+                                                        dialog.settings.path.starts_with("ssh://");
+                                                    if let Ok((host, device)) =
+                                                        signal_forge::ssh_serial::SshHost::parse(
+                                                            &dialog.settings.path,
+                                                        )
+                                                    {
+                                                        dialog.host_name = host.host.clone();
+                                                        dialog.host = host;
+                                                        dialog.device = device;
+                                                    } else {
+                                                        dialog.device =
+                                                            dialog.settings.path.clone();
+                                                    }
                                                 }
                                             }
                                         }
@@ -321,7 +360,59 @@ impl Workbench {
             ui.separator();
             match dialog.kind {
                 SetupKind::Port => {
-                    serial_form(ui, &mut dialog.settings, &mut dialog.baud);
+                    ui.checkbox(&mut dialog.remote, "Remote serial over SSH");
+                    if dialog.remote {
+                        egui::ComboBox::from_id_salt("saved-ssh-hosts").selected_text("Saved SSH hosts").show_ui(ui, |ui| {
+                            for saved in &self.config.remote_hosts {
+                                if ui.selectable_label(dialog.host_name == saved.name, &saved.name).clicked() {
+                                    dialog.host = saved.connection.clone(); dialog.host_name = saved.name.clone();
+                                }
+                            }
+                        });
+                        ui.label("Display name"); ui.text_edit_singleline(&mut dialog.host_name);
+                        ui.label("SSH host or config alias"); ui.text_edit_singleline(&mut dialog.host.host);
+                        let mut user = dialog.host.username.clone().unwrap_or_default();
+                        ui.label("Username (blank uses SSH config)"); ui.text_edit_singleline(&mut user);
+                        dialog.host.username = (!user.is_empty()).then_some(user);
+                        let mut port = dialog.host.port.unwrap_or(0);
+                        ui.horizontal(|ui| {ui.label("SSH port (0 uses config)"); ui.add(egui::DragValue::new(&mut port));});
+                        dialog.host.port = (port != 0).then_some(port);
+                        ui.horizontal(|ui| {
+                            if ui.button("Save host").clicked() {
+                                if let Err(error) = dialog.host.validate() {dialog.error = Some(error.to_string());}
+                                else if dialog.host_name.is_empty() || dialog.host_name.len() > 256 || dialog.host_name.contains(['\0', '\n', '\r']) {dialog.error = Some("Enter a valid display name".into());}
+                                else if self.config.remote_hosts.len() >= 128 && !self.config.remote_hosts.iter().any(|host| host.name == dialog.host_name) {dialog.error = Some("At most 128 SSH hosts can be saved".into());}
+                                else {
+                                    self.config.remote_hosts.retain(|host| host.name != dialog.host_name);
+                                    self.config.remote_hosts.push(signal_forge::ssh_serial::SavedSshHost {name: dialog.host_name.clone(), connection: dialog.host.clone()});
+                                    self.save_workspace(); dialog.error = self.error.clone();
+                                }
+                            }
+                            if ui.button("Remove saved host").clicked() {
+                                self.config.remote_hosts.retain(|host| host.name != dialog.host_name); self.save_workspace();
+                            }
+                        });
+                        ui.weak("Uses SSH keys/agent and strict known-host verification. Remote host needs Python 3.");
+                        if ui.add_enabled(dialog.discovery.is_none(), egui::Button::new("Discover remote devices")).clicked() {
+                            dialog.discovery = Some(signal_forge::ssh_serial::Discovery::start(dialog.host.clone()));
+                        }
+                        if let Some(rx) = &dialog.discovery {
+                            if let Some(result) = rx.try_result() {
+                                dialog.discovery = None;
+                                match result {Ok(paths) => {dialog.devices = paths; dialog.error = None;}, Err(e) => dialog.error = Some(e)}
+                            } else {ui.label("Connecting / discovering…"); ctx.request_repaint_after(Duration::from_millis(100));}
+                        }
+                        egui::ComboBox::from_id_salt("remote-devices").selected_text("Discovered devices").show_ui(ui, |ui| {
+                            for path in &dialog.devices {ui.selectable_value(&mut dialog.device, path.clone(), path);}
+                        });
+                        dialog.settings.path = dialog.device.clone();
+                        serial_form(ui, &mut dialog.settings, &mut dialog.baud);
+                        dialog.device = dialog.settings.path.clone();
+                        dialog.settings.path = dialog.host.uri(&dialog.device);
+                    } else {
+                        if dialog.settings.path.starts_with("ssh://") {dialog.settings.path = String::new();}
+                        serial_form(ui, &mut dialog.settings, &mut dialog.baud);
+                    }
                 }
                 SetupKind::Pair => {
                     ui.label("Pair name"); ui.text_edit_singleline(&mut dialog.pair_name);

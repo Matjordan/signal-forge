@@ -3,9 +3,11 @@ pub mod bridge;
 pub mod config;
 pub mod endpoint;
 pub mod presets;
+pub mod raw_recording;
 pub mod repeat;
 pub mod send;
 pub mod serial;
+pub mod ssh_serial;
 pub mod traffic;
 pub mod virtual_pair;
 

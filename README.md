@@ -46,6 +46,18 @@ The executable is `target/release/signal-forge`. To explicitly open devices at l
 
 Each terminal retains up to 2,000 raw events and 2,000 completed Line/TX rows, plus a pending RX line. Line payloads are capped at 64 KiB with an explicit display truncation marker; raw bytes, statistics, bridges, and captures remain unchanged. RX and TX have distinct labels and colors. Binary bytes are rendered with escapes in text mode. A bounded monitoring queue reports dropped events in the status bar. Monitoring is best-effort, not a lossless capture mechanism.
 
+## Remote serial
+
+Open **New Port**, enable **Remote serial over SSH**, and use an SSH host/config
+alias with your existing keys or agent. Discover remote Linux devices or enter a
+device path, choose serial framing, and open it as a normal endpoint. Host-key
+verification remains strict. Remote hosts need Python 3; the client needs OpenSSH.
+Workspaces save non-secret host/endpoint settings and restore them disconnected.
+See [remote serial setup, tools and tests](docs/remote-serial.md).
+
+The **Files / RX** terminal tool streams binary files and records raw received
+bytes for either local or remote endpoints.
+
 ## Preset profiles
 
 The left sidebar contains the active profile and quick command buttons. Click an endpoint card or terminal pane to select its target, then click a preset name to send. A terminal’s **Presets** tool offers the same commands for that pane. **Manage…** or the toolbar’s **Presets…** opens the library editor. **New preset** opens an editor for name, payload, encoding, escapes, line ending, selected/fixed endpoint target, description, shortcut, and optional repeat settings. **Edit**, **Delete**, **Up**, and **Down** update the profile immediately. A repeating preset refuses to replace a running repeat; stop that job first.
