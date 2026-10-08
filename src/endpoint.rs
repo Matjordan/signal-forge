@@ -54,6 +54,15 @@ pub trait Endpoint: Send {
     fn file_send_active(&self) -> bool {
         false
     }
+    fn send_file_mode(
+        &self,
+        _path: &std::path::Path,
+        _mode: crate::file_transfer::FileMode,
+        _chunk: usize,
+        _delay: std::time::Duration,
+    ) -> Result<crate::file_transfer::FileTransferHandle, EndpointError> {
+        Err(EndpointError::Disconnected)
+    }
     fn start_repeat(&self, bytes: Vec<u8>, spec: RepeatSpec)
         -> Result<RepeatHandle, EndpointError>;
     fn bridge_port(&self) -> Result<crate::bridge::BridgePort, EndpointError>;
@@ -61,6 +70,15 @@ pub trait Endpoint: Send {
 }
 
 impl<T: Endpoint + ?Sized> Endpoint for Box<T> {
+    fn send_file_mode(
+        &self,
+        path: &std::path::Path,
+        mode: crate::file_transfer::FileMode,
+        chunk: usize,
+        delay: std::time::Duration,
+    ) -> Result<crate::file_transfer::FileTransferHandle, EndpointError> {
+        (**self).send_file_mode(path, mode, chunk, delay)
+    }
     fn file_send_active(&self) -> bool {
         (**self).file_send_active()
     }

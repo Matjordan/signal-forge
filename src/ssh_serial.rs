@@ -277,6 +277,18 @@ impl SshSerialEndpoint {
     }
 }
 impl Endpoint for SshSerialEndpoint {
+    fn send_file_mode(
+        &self,
+        path: &std::path::Path,
+        mode: crate::file_transfer::FileMode,
+        chunk: usize,
+        delay: Duration,
+    ) -> Result<crate::file_transfer::FileTransferHandle, EndpointError> {
+        if self.state() != ConnectionState::Connected {
+            return Err(EndpointError::Disconnected);
+        }
+        self.inner.send_file_mode(path, mode, chunk, delay)
+    }
     fn file_send_active(&self) -> bool {
         self.inner.file_send_active()
     }

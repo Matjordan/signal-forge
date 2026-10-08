@@ -55,8 +55,9 @@ verification remains strict. Remote hosts need Python 3; the client needs OpenSS
 Workspaces save non-secret host/endpoint settings and restore them disconnected.
 See [remote serial setup, tools and tests](docs/remote-serial.md).
 
-The **Files / RX** terminal tool streams binary files and records raw received
-bytes for either local or remote endpoints.
+The **Files / RX** terminal tool sends files and records received bytes in Raw,
+ASCII, or Hex mode for either local or remote endpoints. See
+[file sending and RX recording](docs/terminal-files.md).
 
 ## Preset profiles
 
