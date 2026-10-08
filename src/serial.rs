@@ -29,7 +29,7 @@ pub fn discover() -> Result<Vec<String>, EndpointError> {
 enum Command {
     Send(Vec<u8>),
     Repeat(RepeatJob),
-    File(std::fs::File),
+    File(crate::file_transfer::FileJob),
 }
 
 pub(crate) trait TransportReader: Read + Send {
@@ -139,9 +139,9 @@ impl SerialEndpoint {
         let worker = thread::Builder::new()
             .name(id.0.clone())
             .spawn(move || {
-                let mut buffer = [0; 4096];
+                let mut buffer = [0; 65536];
                 let mut repeat: Option<RepeatJob> = None;
-                let mut file: Option<std::fs::File> = None;
+                let mut file: Option<crate::file_transfer::FileJob> = None;
                 let result = (|| -> Result<(), EndpointError> {
                     while !worker_stop.load(Ordering::Acquire) {
                         // Bound command processing so manual sends cannot starve RX or timers.
@@ -171,15 +171,51 @@ impl SerialEndpoint {
                         if worker_stop.load(Ordering::Acquire) {
                             break;
                         }
-                        if let Some(opened) = &mut file {
-                            let count = opened
-                                .read(&mut buffer)
-                                .map_err(|e| EndpointError::Io(format!("Send file: {e}")))?;
-                            if count == 0 {
+                        if let Some(job) = &mut file {
+                            use crate::file_transfer::TransferState;
+                            if job.handle.cancel.load(Ordering::Acquire) {
+                                job.handle.finish(TransferState::Cancelled);
                                 file = None;
                                 worker_file_active.store(false, Ordering::Release);
-                            } else if !worker_writer.write(&buffer[..count], &worker_stop)? {
-                                return Ok(());
+                            } else if job.remaining == 0 {
+                                job.handle.finish(TransferState::Completed);
+                                file = None;
+                                worker_file_active.store(false, Ordering::Release);
+                            } else if Instant::now() >= job.next {
+                                let length = job.chunk.min(buffer.len());
+                                let count = match job.file.read(&mut buffer[..length]) {
+                                    Ok(count) => count,
+                                    Err(error) => {
+                                        job.handle.finish(TransferState::Failed(error.to_string()));
+                                        0
+                                    }
+                                };
+                                if count == 0 {
+                                    if job.handle.is_active() {
+                                        job.handle.finish(TransferState::Failed(
+                                            "Prepared file ended unexpectedly".into(),
+                                        ));
+                                    }
+                                    file = None;
+                                    worker_file_active.store(false, Ordering::Release);
+                                } else {
+                                    match worker_writer.write_file(&buffer[..count], &job.handle) {
+                                        Ok(true) => {
+                                            job.remaining -= count as u64;
+                                            job.next = Instant::now() + job.delay;
+                                        }
+                                        Ok(false) => {
+                                            job.handle.finish(TransferState::Cancelled);
+                                            file = None;
+                                            worker_file_active.store(false, Ordering::Release);
+                                        }
+                                        Err(error) => {
+                                            job.handle
+                                                .finish(TransferState::Failed(error.to_string()));
+                                            return Err(error);
+                                        }
+                                    }
+                                }
                             }
                         }
                         if let Some(job) = &mut repeat {
@@ -221,6 +257,14 @@ impl SerialEndpoint {
                 })();
                 if let (Some(job), Err(error)) = (&repeat, &result) {
                     job.fail(&error.to_string());
+                }
+                if let Some(job) = &file {
+                    if let Err(error) = &result {
+                        job.handle
+                            .finish(crate::file_transfer::TransferState::Failed(
+                                error.to_string(),
+                            ));
+                    }
                 }
                 // Active and still-queued repeat commands cancel when their owners drop.
                 drop(repeat);
@@ -308,35 +352,65 @@ impl Endpoint for SerialEndpoint {
         })
     }
     fn send_file(&self, path: &std::path::Path) -> Result<(), EndpointError> {
+        self.send_file_mode(
+            path,
+            crate::file_transfer::FileMode::Raw,
+            4096,
+            Duration::ZERO,
+        )
+        .map(|_| ())
+    }
+    fn send_file_mode(
+        &self,
+        path: &std::path::Path,
+        mode: crate::file_transfer::FileMode,
+        chunk: usize,
+        delay: Duration,
+    ) -> Result<crate::file_transfer::FileTransferHandle, EndpointError> {
         if self.state() != ConnectionState::Connected {
             return Err(EndpointError::Disconnected);
         }
-        use std::os::unix::fs::OpenOptionsExt;
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(nix::libc::O_NONBLOCK)
-            .open(path)
-            .map_err(|e| EndpointError::Io(format!("Send file: {e}")))?;
-        if !file
-            .metadata()
-            .map_err(|e| EndpointError::Io(e.to_string()))?
-            .is_file()
-        {
-            return Err(EndpointError::Io(
-                "Send file requires a regular file".into(),
-            ));
-        }
+        crate::file_transfer::validate_options(chunk, delay).map_err(EndpointError::Io)?;
         if self.file_active.swap(true, Ordering::AcqRel) {
             return Err(EndpointError::Io("A file send is already active".into()));
         }
-        if let Err(error) = self.tx.try_send(Command::File(file)) {
-            self.file_active.store(false, Ordering::Release);
-            return Err(match error {
-                TrySendError::Full(_) => EndpointError::QueueFull,
-                TrySendError::Disconnected(_) => EndpointError::Disconnected,
+        let handle = crate::file_transfer::FileTransferHandle::new();
+        let preparing = handle.clone();
+        let stop = self.stop.clone();
+        let active = self.file_active.clone();
+        let tx = self.tx.clone();
+        let path = path.to_path_buf();
+        let spawned = thread::Builder::new()
+            .name("file-prepare".into())
+            .spawn(move || {
+                use crate::file_transfer::TransferState;
+                match crate::file_transfer::prepare(path, mode, &preparing, &stop, chunk, delay) {
+                    Ok(job) => {
+                        if let Err(error) = tx.try_send(Command::File(job)) {
+                            preparing
+                                .finish(TransferState::Failed(format!("File send queue: {error}")));
+                            active.store(false, Ordering::Release);
+                        }
+                    }
+                    Err(error) => {
+                        preparing.finish(
+                            if preparing.cancel.load(Ordering::Acquire)
+                                || stop.load(Ordering::Acquire)
+                            {
+                                TransferState::Cancelled
+                            } else {
+                                TransferState::Failed(error)
+                            },
+                        );
+                        active.store(false, Ordering::Release);
+                    }
+                }
             });
+        if let Err(error) = spawned {
+            self.file_active.store(false, Ordering::Release);
+            return Err(EndpointError::Io(error.to_string()));
         }
-        Ok(())
+        Ok(handle)
     }
     fn start_repeat(
         &self,
@@ -391,6 +465,7 @@ fn write_payload(
     cancelled: Option<&AtomicBool>,
     bus: &TrafficBus,
     id: &EndpointId,
+    written: Option<&std::sync::atomic::AtomicU64>,
 ) -> Result<bool, EndpointError> {
     let mut offset = 0;
     while offset < bytes.len() {
@@ -404,6 +479,9 @@ fn write_payload(
             Ok(count) => {
                 bus.publish(id.clone(), Direction::Tx, &bytes[offset..offset + count]);
                 offset += count;
+                if let Some(written) = written {
+                    written.fetch_add(count as u64, Ordering::Release);
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -441,6 +519,7 @@ impl BridgeWriter for SerialWriter {
             Some(cancelled),
             &self.bus,
             &self.id,
+            None,
         );
         if let Err(error) = &result {
             *self.state.lock().unwrap_or_else(|e| e.into_inner()) =
@@ -452,6 +531,25 @@ impl BridgeWriter for SerialWriter {
 }
 
 impl SerialWriter {
+    fn write_file(
+        &self,
+        bytes: &[u8],
+        handle: &crate::file_transfer::FileTransferHandle,
+    ) -> Result<bool, EndpointError> {
+        let mut port = self.port.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(port) = port.as_mut() else {
+            return Err(EndpointError::Disconnected);
+        };
+        write_payload(
+            &mut **port,
+            bytes,
+            &self.stop,
+            Some(&handle.cancel),
+            &self.bus,
+            &self.id,
+            Some(&handle.sent),
+        )
+    }
     fn close(&self) {
         self.port.lock().unwrap_or_else(|e| e.into_inner()).take();
     }

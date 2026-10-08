@@ -52,8 +52,9 @@ network delay; calculated wire time still uses the configured serial framing.
 For remote TX, traffic statistics describe bytes accepted by the SSH stream, not
 an acknowledgement from the remote serial driver or device.
 
-Select a terminal's **Files / RX** tool to send a binary file or record raw RX.
-File transfers stream from disk in bounded chunks on the transport worker. A file
+Select a terminal's **Files / RX** tool to send or record in Raw, ASCII, or Hex
+mode. See [terminal file tools](terminal-files.md) for formats and progress.
+Files are prepared off the UI thread and sent in bounded transport chunks. A file
 send cancels an active repeat; manual and repeated sends are rejected while the
 file transfer is active. Disconnect cancels it. Bridge writes share the same
 stream, so stop a bridge if the recipient requires an uninterrupted file.

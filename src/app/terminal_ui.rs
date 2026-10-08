@@ -181,7 +181,7 @@ impl TerminalViewer<'_> {
             TerminalTool::Send => 0.0,
             TerminalTool::Repeat => 64.0,
             TerminalTool::Presets => 80.0,
-            TerminalTool::Files => 130.0,
+            TerminalTool::Files => 240.0,
         };
         let terminal_height = (ui.available_height() - theme::SEND_AREA_HEIGHT - extra).max(40.0);
         theme::canvas_frame().show(ui, |ui| {
@@ -482,10 +482,8 @@ impl TerminalViewer<'_> {
     }
 
     pub(super) fn files_panel(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
-        if tab.endpoint.file_send_active() {
-            ui.label("Sending file… Disconnect to cancel.");
-        }
-        ui.label("Send binary file (unchanged bytes)");
+        use signal_forge::file_transfer::{FileMode, TransferState};
+        ui.label("Send file");
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut tab.file_path);
             if ui
@@ -496,14 +494,84 @@ impl TerminalViewer<'_> {
                 )
                 .clicked()
             {
-                tab.error = tab
-                    .endpoint
-                    .send_file(std::path::Path::new(&tab.file_path))
-                    .err()
-                    .map(|e| e.to_string());
+                match tab.endpoint.send_file_mode(
+                    std::path::Path::new(&tab.file_path),
+                    tab.file_mode,
+                    tab.file_chunk,
+                    Duration::from_millis(tab.file_delay_ms),
+                ) {
+                    Ok(handle) => {
+                        tab.file_handle = Some(handle);
+                        tab.error = None;
+                    }
+                    Err(error) => tab.error = Some(error.to_string()),
+                }
             }
         });
-        ui.label("Record raw RX to a new file");
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt(("file-send-mode", tab.endpoint.id().clone()))
+                .selected_text(format!("{:?}", tab.file_mode))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut tab.file_mode, FileMode::Raw, "Raw / Binary");
+                    ui.selectable_value(
+                        &mut tab.file_mode,
+                        FileMode::Ascii,
+                        "ASCII / Text (UTF-8)",
+                    );
+                    ui.selectable_value(&mut tab.file_mode, FileMode::Hex, "Hex");
+                });
+            ui.label("Chunk");
+            ui.add(
+                egui::DragValue::new(&mut tab.file_chunk)
+                    .range(1..=65536)
+                    .suffix(" B"),
+            );
+            ui.label("Delay");
+            ui.add(
+                egui::DragValue::new(&mut tab.file_delay_ms)
+                    .range(0..=60000)
+                    .suffix(" ms"),
+            );
+        });
+        ui.weak("Raw/text preserve line endings; Hex is validated before sending.");
+        if let Some(handle) = &tab.file_handle {
+            let status = handle.status();
+            if status.state == TransferState::Preparing {
+                ui.label("Preparing and validating file…");
+            }
+            let ratio = if status.total == 0 {
+                if status.state == TransferState::Completed {
+                    1.0
+                } else {
+                    0.0
+                }
+            } else {
+                status.sent as f32 / status.total as f32
+            };
+            ui.add(egui::ProgressBar::new(ratio).text(format!(
+                "{:?}: {} / {} bytes",
+                status.state, status.sent, status.total
+            )));
+            if ui
+                .add_enabled(handle.is_active(), egui::Button::new("Cancel file send"))
+                .clicked()
+            {
+                handle.cancel();
+            }
+        }
+        ui.separator();
+        ui.label("Record RX to a new file");
+        egui::ComboBox::from_id_salt(("rx-file-mode", tab.endpoint.id().clone()))
+            .selected_text(format!("{:?}", tab.recording_mode))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut tab.recording_mode, FileMode::Raw, "Raw / Binary");
+                ui.selectable_value(
+                    &mut tab.recording_mode,
+                    FileMode::Ascii,
+                    "ASCII / Text (escaped binary)",
+                );
+                ui.selectable_value(&mut tab.recording_mode, FileMode::Hex, "Hex");
+            });
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut tab.recording_path);
             if ui
@@ -520,10 +588,11 @@ impl TerminalViewer<'_> {
                 if let Some(recording) = &mut tab.recording {
                     recording.finish();
                 }
-                match signal_forge::raw_recording::RawRecording::start(
+                match signal_forge::raw_recording::RawRecording::start_mode(
                     std::path::Path::new(&tab.recording_path),
                     tab.endpoint.id().clone(),
                     self.bus,
+                    tab.recording_mode,
                 ) {
                     Ok(recording) => {
                         tab.recording = Some(recording);

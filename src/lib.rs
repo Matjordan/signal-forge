@@ -2,6 +2,7 @@
 pub mod bridge;
 pub mod config;
 pub mod endpoint;
+pub mod file_transfer;
 pub mod presets;
 pub mod raw_recording;
 pub mod repeat;

@@ -1,85 +1,152 @@
-//! Raw RX bytes recorded by a dedicated subscriber, independent of display state.
+//! RX payload files with no display metadata; writers run independently of GUI.
 use crate::{
     endpoint::EndpointId,
-    traffic::{Direction, TrafficBus},
+    file_transfer::FileMode,
+    traffic::{Direction, TrafficBus, TrafficControl},
 };
 use std::{
     fs::OpenOptions,
     io::{BufWriter, Write},
     path::Path,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     thread::{self, JoinHandle},
-    time::Duration,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecordingState {
+    Recording,
+    Finishing,
+    Completed,
+    Incomplete,
+    Failed(String),
+}
+#[derive(Clone, Debug)]
+pub struct RecordingStatus {
+    pub state: RecordingState,
+    pub received: u64,
+    pub written: u64,
+    pub dropped: u64,
+}
 pub struct RawRecording {
-    stop: Arc<AtomicBool>,
-    status: Arc<Mutex<String>>,
+    control: TrafficControl,
+    status: Arc<Mutex<RecordingStatus>>,
     worker: Option<JoinHandle<()>>,
 }
 impl RawRecording {
     pub fn start(path: &Path, endpoint: EndpointId, bus: &TrafficBus) -> Result<Self, String> {
-        let file = OpenOptions::new()
+        Self::start_mode(path, endpoint, bus, FileMode::Raw)
+    }
+    pub fn start_mode(
+        path: &Path,
+        endpoint: EndpointId,
+        bus: &TrafficBus,
+        mode: FileMode,
+    ) -> Result<Self, String> {
+        Self::start_subscription(
+            path,
+            endpoint.clone(),
+            mode,
+            bus.subscribe_endpoint_rx(4096, endpoint),
+        )
+    }
+    pub fn start_subscription(
+        path: &Path,
+        endpoint: EndpointId,
+        mode: FileMode,
+        subscription: crate::traffic::TrafficSubscription,
+    ) -> Result<Self, String> {
+        let opened = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(path)
-            .map_err(|e| e.to_string())?;
-        let subscription = bus.subscribe_tracked(4096);
-        let stop = Arc::new(AtomicBool::new(false));
-        let stopping = stop.clone();
-        let status = Arc::new(Mutex::new("Recording".to_string()));
+            .map_err(|e| e.to_string());
+        let file = match opened {
+            Ok(file) => file,
+            Err(error) => {
+                subscription.close();
+                return Err(error);
+            }
+        };
+        let control = subscription.control();
+        let status = Arc::new(Mutex::new(RecordingStatus {
+            state: RecordingState::Recording,
+            received: 0,
+            written: 0,
+            dropped: 0,
+        }));
         let progress = status.clone();
         let worker = thread::spawn(move || {
             let mut writer = BufWriter::new(file);
-            let mut bytes = 0u64;
-            let mut closed = false;
+            let mut column = 0;
             let result = (|| -> Result<(), std::io::Error> {
-                loop {
-                    if stopping.load(Ordering::Acquire) && !closed {
-                        subscription.close();
-                        closed = true;
+                while let Ok(event) = subscription.receiver.recv() {
+                    if event.endpoint != endpoint || event.direction != Direction::Rx {
+                        continue;
                     }
-                    match subscription
-                        .receiver
-                        .recv_timeout(Duration::from_millis(20))
-                    {
-                        Ok(event)
-                            if event.endpoint == endpoint && event.direction == Direction::Rx =>
-                        {
-                            writer.write_all(&event.bytes)?;
-                            bytes += event.bytes.len() as u64;
+                    progress.lock().unwrap().received += event.bytes.len() as u64;
+                    let encoded = match mode {
+                        FileMode::Raw => event.bytes.to_vec(),
+                        FileMode::Ascii => {
+                            let mut output = Vec::new();
+                            for byte in event.bytes.iter() {
+                                match byte {
+                                    b'\r' | b'\n' | b'\t' | 32..=126 => output.push(*byte),
+                                    _ => output
+                                        .extend_from_slice(format!("\\x{byte:02X}").as_bytes()),
+                                }
+                            }
+                            output
                         }
-                        Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                    }
+                        FileMode::Hex => {
+                            let mut output = Vec::new();
+                            for byte in event.bytes.iter() {
+                                output.extend_from_slice(format!("{byte:02X}").as_bytes());
+                                column += 1;
+                                if column == 16 {
+                                    output.push(b'\n');
+                                    column = 0;
+                                } else {
+                                    output.push(b' ');
+                                }
+                            }
+                            output
+                        }
+                    };
+                    writer.write_all(&encoded)?;
+                    writer.flush()?;
+                    let mut status = progress.lock().unwrap();
+                    status.written += encoded.len() as u64;
+                    status.dropped = subscription.dropped_events();
+                }
+                if mode == FileMode::Hex && column != 0 {
+                    writer.write_all(b"\n")?;
                 }
                 writer.flush()?;
                 writer.get_ref().sync_all()
             })();
             subscription.close();
-            let drops = subscription.dropped_events();
-            *progress.lock().unwrap() = match result {
-                Err(e) => format!("Recording failed: {e}"),
-                Ok(()) if drops > 0 => {
-                    format!("Incomplete: {bytes} bytes, {drops} dropped monitoring events")
-                }
-                Ok(()) => format!("Completed: {bytes} bytes"),
+            let mut status = progress.lock().unwrap();
+            status.dropped = subscription.dropped_events();
+            if let Ok(metadata) = writer.get_ref().metadata() {
+                status.written = metadata.len();
+            }
+            status.state = match result {
+                Err(e) => RecordingState::Failed(e.to_string()),
+                Ok(()) if status.dropped > 0 => RecordingState::Incomplete,
+                Ok(()) => RecordingState::Completed,
             };
         });
         Ok(Self {
-            stop,
+            control,
             status,
             worker: Some(worker),
         })
     }
     pub fn stop(&self) {
-        self.stop.store(true, Ordering::Release);
+        self.control.close();
         let mut status = self.status.lock().unwrap();
-        if *status == "Recording" {
-            *status = "Finishing".into();
+        if status.state == RecordingState::Recording {
+            status.state = RecordingState::Finishing;
         }
     }
     pub fn is_active(&self) -> bool {
@@ -87,8 +154,15 @@ impl RawRecording {
             .as_ref()
             .is_some_and(|worker| !worker.is_finished())
     }
-    pub fn status(&self) -> String {
+    pub fn progress(&self) -> RecordingStatus {
         self.status.lock().unwrap().clone()
+    }
+    pub fn status(&self) -> String {
+        let status = self.progress();
+        format!(
+            "{:?}: {} bytes received / {} bytes written; {} dropped events",
+            status.state, status.received, status.written, status.dropped
+        )
     }
     pub fn finish(&mut self) {
         self.stop();

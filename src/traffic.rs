@@ -22,6 +22,7 @@ pub struct TrafficEvent {
 }
 
 struct Subscriber {
+    filter: Option<(EndpointId, Direction)>,
     sender: SyncSender<Arc<TrafficEvent>>,
     dropped: Arc<AtomicU64>,
     id: u64,
@@ -44,12 +45,27 @@ impl TrafficBus {
         self.subscribe_tracked(capacity).receiver
     }
     pub fn subscribe_tracked(&self, capacity: usize) -> TrafficSubscription {
+        self.subscribe_filtered(capacity, None)
+    }
+    pub fn subscribe_endpoint_rx(
+        &self,
+        capacity: usize,
+        endpoint: EndpointId,
+    ) -> TrafficSubscription {
+        self.subscribe_filtered(capacity, Some((endpoint, Direction::Rx)))
+    }
+    fn subscribe_filtered(
+        &self,
+        capacity: usize,
+        filter: Option<(EndpointId, Direction)>,
+    ) -> TrafficSubscription {
         let (sender, receiver) = mpsc::sync_channel(capacity.max(1));
         let dropped = Arc::new(AtomicU64::new(0));
         let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
         inner.next_subscriber += 1;
         let id = inner.next_subscriber;
         inner.subscribers.push(Subscriber {
+            filter,
             sender,
             dropped: dropped.clone(),
             id,
@@ -76,6 +92,15 @@ impl TrafficBus {
             bytes: Arc::from(bytes),
         });
         inner.subscribers.retain_mut(|subscriber| {
+            if subscriber
+                .filter
+                .as_ref()
+                .is_some_and(|(endpoint, direction)| {
+                    event.endpoint != *endpoint || event.direction != *direction
+                })
+            {
+                return true;
+            }
             match subscriber.sender.try_send(event.clone()) {
                 Ok(()) => true,
                 Err(TrySendError::Full(_)) => {
@@ -109,9 +134,31 @@ pub struct TrafficSubscription {
     bus: TrafficBus,
 }
 impl TrafficSubscription {
+    pub fn control(&self) -> TrafficControl {
+        TrafficControl {
+            bus: self.bus.clone(),
+            id: self.id,
+        }
+    }
     pub fn dropped_events(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
     }
+    pub fn close(&self) {
+        self.bus
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .subscribers
+            .retain(|s| s.id != self.id);
+    }
+}
+
+/// Detach immediately at a caller's cutoff while a worker drains queued events.
+pub struct TrafficControl {
+    bus: TrafficBus,
+    id: u64,
+}
+impl TrafficControl {
     pub fn close(&self) {
         self.bus
             .0
