@@ -40,3 +40,5 @@ checks above require a local bench and are not claimed as CI evidence.
 
 11. Use **4 Tiles** with four live endpoints at 1080p, 1440p, and 900×600. Send from each pane, switch Send/Repeat/Presets, and expand Settings/Display. Confirm controls remain reachable. Retile to **2 Tiles**; connections must stay open.
 12. Open each setup dialog and cancel it. No port, pair, bridge, or workspace changes should occur. Test invalid port/custom baud, duplicate pair links, identical bridge endpoints, and an invalid workspace path; errors should stay in setup.
+
+13. Install the package into `~/.local`. Verify Signal Forge appears with its waveform icon in the KDE/GNOME launcher, menu search, task switcher and dock; the native window should show the same icon where supported. Update to a new release and verify there is one launcher and the new assets are installed. Test `share/signal-forge/uninstall.sh`; launcher/icons should disappear while workspace, presets and captures remain.

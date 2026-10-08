@@ -1,5 +1,6 @@
 //! Official stable-release discovery and verified, atomic Linux executable updates.
 //! Network and archive work run outside the UI. No downloaded installer is executed.
+use crate::desktop::{self, Assets, InstalledAssets, PreparedAssets};
 use flate2::read::GzDecoder;
 use reqwest::blocking::Client;
 use semver::Version;
@@ -161,11 +162,13 @@ pub struct PreparedUpdate {
     version: Version,
     binary: tempfile::TempPath,
     target: PathBuf,
+    assets: Option<PreparedAssets>,
 }
 pub struct InstalledUpdate {
     version: Version,
     pub target: PathBuf,
     pub backup: PathBuf,
+    assets: Option<InstalledAssets>,
 }
 /// Staging in the executable's directory proves directory write access before downloading.
 pub fn prepare(
@@ -229,7 +232,9 @@ pub fn prepare(
     progress(Progress::Verifying);
     verify_digest(&expected, &format!("{:x}", digest.finalize()))?;
     let archive_file = archive.reopen().map_err(|e| e.to_string())?;
-    let binary = extract_binary(archive_file, parent, &offer.version)?;
+    let prefix = desktop::installation_prefix(&target);
+    let (binary, assets) = extract_release(archive_file, parent, &offer.version, prefix.is_some())?;
+    let assets = prefix.map(|prefix| assets.prepare(&prefix)).transpose()?;
     binary
         .as_file()
         .set_permissions(metadata.permissions())
@@ -242,6 +247,7 @@ pub fn prepare(
         version: offer.version.clone(),
         binary,
         target,
+        assets,
     })
 }
 pub fn parse_checksum(text: &str, name: &str) -> Result<String> {
@@ -263,33 +269,80 @@ pub fn verify_digest(expected: &str, actual: &str) -> Result<()> {
     }
     Ok(())
 }
-/// Never unpack archive paths or execute its install.sh. Copy only the exact regular binary.
+/// Never unpack archive paths or execute install.sh. Stage only exact regular
+/// executable and application-owned asset paths from the checksum-verified release.
 pub fn extract_binary(
     reader: impl Read,
     directory: &Path,
     version: &Version,
 ) -> Result<NamedTempFile> {
-    let expected = format!("signal-forge-{version}-linux-x86_64/bin/signal-forge");
+    extract_release(reader, directory, version, false).map(|(binary, _)| binary)
+}
+fn extract_release(
+    reader: impl Read,
+    directory: &Path,
+    version: &Version,
+    require_assets: bool,
+) -> Result<(NamedTempFile, Assets)> {
+    let root = format!("signal-forge-{version}-linux-x86_64");
+    let expected = Path::new(&root).join("bin/signal-forge");
     let mut archive = tar::Archive::new(GzDecoder::new(reader).take(512 * 1024 * 1024));
     let mut binary = None;
+    let mut assets = Assets::default();
+    let mut manifest = None;
     for entry in archive.entries().map_err(|e| e.to_string())? {
         let mut entry = entry.map_err(|e| e.to_string())?;
-        if entry.path().map_err(|e| e.to_string())?.as_ref() != Path::new(&expected) {
+        let path = entry.path().map_err(|e| e.to_string())?.into_owned();
+        if path == expected {
+            if binary.is_some()
+                || !entry.header().entry_type().is_file()
+                || entry.size() > MAX_BINARY
+            {
+                return Err("Archive contains an invalid or duplicate executable.".into());
+            }
+            let mut file = NamedTempFile::new_in(directory).map_err(|e| e.to_string())?;
+            std::io::copy(&mut entry, &mut file).map_err(|e| e.to_string())?;
+            file.as_file()
+                .set_permissions(fs::Permissions::from_mode(0o755))
+                .map_err(|e| e.to_string())?;
+            file.as_file().sync_all().map_err(|e| e.to_string())?;
+            binary = Some(file);
             continue;
         }
-        if binary.is_some() || !entry.header().entry_type().is_file() || entry.size() > MAX_BINARY {
-            return Err("Archive contains an invalid or duplicate executable.".into());
+        let Some(relative) = path.strip_prefix(&root).ok().and_then(|p| p.to_str()) else {
+            continue;
+        };
+        if !desktop::owned_path(relative) || entry.header().entry_type().is_dir() {
+            continue;
         }
-        let mut file = NamedTempFile::new_in(directory).map_err(|e| e.to_string())?;
-        std::io::copy(&mut entry, &mut file).map_err(|e| e.to_string())?;
-        file.as_file().sync_all().map_err(|e| e.to_string())?;
-        file.as_file()
-            .set_permissions(fs::Permissions::from_mode(0o755))
-            .map_err(|e| e.to_string())?;
-        binary = Some(file);
+        if !entry.header().entry_type().is_file() || entry.size() > 8 * 1024 * 1024 {
+            return Err("Archive contains an invalid installation asset".into());
+        }
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data).map_err(|e| e.to_string())?;
+        if relative == desktop::MANIFEST {
+            if manifest.replace(data).is_some() {
+                return Err("Duplicate installation manifest".into());
+            }
+        } else {
+            assets.add(relative.into(), data)?;
+        }
     }
-    binary.ok_or_else(|| "Release archive does not contain the expected executable.".into())
+    if require_assets {
+        assets.validate()?;
+        desktop::validate_manifest(
+            manifest
+                .as_deref()
+                .ok_or("Release has no installation manifest")?,
+            &assets,
+        )?;
+    }
+    Ok((
+        binary.ok_or("Release archive does not contain the expected executable.")?,
+        assets,
+    ))
 }
+
 fn validate_binary(path: &Path, version: &Version) -> Result<()> {
     let mut header = [0u8; 20];
     File::open(path)
@@ -330,7 +383,7 @@ fn validate_binary(path: &Path, version: &Version) -> Result<()> {
 }
 impl PreparedUpdate {
     /// Linux rename replaces the directory entry while the running inode stays usable.
-    pub fn install(self) -> Result<InstalledUpdate> {
+    pub fn install(mut self) -> Result<InstalledUpdate> {
         let parent = self
             .target
             .parent()
@@ -355,14 +408,25 @@ impl PreparedUpdate {
             .map_err(|e| e.to_string())?;
         backup.as_file().sync_all().map_err(|e| e.to_string())?;
         let (_, backup_path) = backup.keep().map_err(|e| e.to_string())?;
+        let mut assets = match self.assets.take().map(PreparedAssets::install).transpose() {
+            Ok(assets) => assets,
+            Err(error) => {
+                let _ = fs::remove_file(&backup_path);
+                return Err(error);
+            }
+        };
         if let Err(error) = self.binary.persist(&self.target) {
+            if let Some(assets) = &mut assets {
+                assets.rollback()?;
+            }
             let _ = fs::remove_file(&backup_path);
             return Err(format!("Install failed; existing executable kept: {error}"));
         }
-        let installed = InstalledUpdate {
+        let mut installed = InstalledUpdate {
             version: self.version,
             target: self.target,
             backup: backup_path,
+            assets,
         };
         if let Err(error) = File::open(&parent).and_then(|f| f.sync_all()) {
             installed.rollback()?;
@@ -374,17 +438,26 @@ impl PreparedUpdate {
     }
 }
 impl InstalledUpdate {
-    pub fn rollback(&self) -> Result<()> {
+    pub fn rollback(&mut self) -> Result<()> {
+        let assets = self
+            .assets
+            .as_mut()
+            .map(InstalledAssets::rollback)
+            .transpose();
         fs::rename(&self.backup, &self.target).map_err(|e| {
             format!(
                 "Restore {} from {}: {e}",
                 self.target.display(),
                 self.backup.display()
             )
-        })
+        })?;
+        File::open(self.target.parent().unwrap())
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
+        assets.map(|_| ())
     }
     /// Called only after the old workbench is dropped, saving its workspace and releasing I/O.
-    pub fn restart(self) -> Result<()> {
+    pub fn restart(mut self) -> Result<()> {
         use std::io::BufRead;
         use std::os::{fd::AsRawFd, unix::net::UnixStream};
         let attempt = (|| -> Result<()> {
@@ -613,6 +686,123 @@ mod tests {
         .is_err());
         assert!(extract_binary(&b"not gzip"[..], dir.path(), &version).is_err());
     }
+    fn asset_fixture(marker: &[u8]) -> Assets {
+        let mut assets = Assets::default();
+        assets
+            .add(
+                "share/applications/signal-forge.desktop".into(),
+                include_bytes!("../packaging/signal-forge.desktop").to_vec(),
+            )
+            .unwrap();
+        assets
+            .add(
+                "share/signal-forge/uninstall.sh".into(),
+                include_bytes!("../packaging/uninstall.sh").to_vec(),
+            )
+            .unwrap();
+        for size in desktop::ICON_SIZES {
+            assets
+                .add(
+                    format!("share/icons/hicolor/{size}x{size}/apps/signal-forge.png"),
+                    marker.to_vec(),
+                )
+                .unwrap();
+        }
+        assets
+    }
+    #[test]
+    fn extracts_verified_managed_assets_and_rejects_link_duplicate_or_incomplete_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = dir.path().join("signal-forge-1.0.0-linux-x86_64");
+        fs::create_dir_all(package.join("bin")).unwrap();
+        fs::write(package.join("bin/signal-forge"), "binary").unwrap();
+        asset_fixture(b"new icon")
+            .prepare(&package)
+            .unwrap()
+            .install()
+            .unwrap();
+        let archive_bytes = |extra: Option<tar::EntryType>| {
+            let gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            let mut tar = tar::Builder::new(gzip);
+            tar.append_dir_all("signal-forge-1.0.0-linux-x86_64", &package)
+                .unwrap();
+            if let Some(kind) = extra {
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(kind);
+                header.set_mode(0o644);
+                header.set_size(0);
+                if kind.is_symlink() {
+                    header.set_link_name("/tmp/foreign").unwrap();
+                }
+                header.set_cksum();
+                tar.append_data(&mut header, "signal-forge-1.0.0-linux-x86_64/share/icons/hicolor/16x16/apps/signal-forge.png", &b""[..]).unwrap();
+            }
+            tar.into_inner().unwrap().finish().unwrap()
+        };
+        let bytes = archive_bytes(None);
+        let (binary, assets) =
+            extract_release(&bytes[..], dir.path(), &Version::new(1, 0, 0), true).unwrap();
+        assert_eq!(fs::read(binary.path()).unwrap(), b"binary");
+        let destination = dir.path().join("installed");
+        fs::create_dir(&destination).unwrap();
+        assets.prepare(&destination).unwrap().install().unwrap();
+        assert_eq!(
+            fs::read(destination.join("share/icons/hicolor/256x256/apps/signal-forge.png"))
+                .unwrap(),
+            b"new icon"
+        );
+        for kind in [tar::EntryType::Regular, tar::EntryType::Symlink] {
+            assert!(extract_release(
+                &archive_bytes(Some(kind))[..],
+                dir.path(),
+                &Version::new(1, 0, 0),
+                true
+            )
+            .is_err());
+        }
+        assert!(extract_release(
+            &archive(tar::EntryType::Regular, false)[..],
+            dir.path(),
+            &Version::new(1, 0, 0),
+            true
+        )
+        .is_err());
+    }
+    #[test]
+    fn failed_restart_rolls_back_executable_icon_launcher_and_manifest_together() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("bin")).unwrap();
+        let target = dir.path().join("bin/signal-forge");
+        let old = fixture(dir.path(), "old_assets", "0.9.0");
+        let wrong = fixture(dir.path(), "wrong_assets", "2.0.0");
+        fs::copy(&old, &target).unwrap();
+        asset_fixture(b"old icon")
+            .prepare(dir.path())
+            .unwrap()
+            .install()
+            .unwrap();
+        let launcher =
+            fs::read(dir.path().join("share/applications/signal-forge.desktop")).unwrap();
+        let manifest = fs::read(dir.path().join(desktop::MANIFEST)).unwrap();
+        let mut staged = prepared(&wrong, &target);
+        staged.assets = Some(asset_fixture(b"new icon").prepare(dir.path()).unwrap());
+        let installed = staged.install().unwrap();
+        let icon = dir
+            .path()
+            .join("share/icons/hicolor/256x256/apps/signal-forge.png");
+        assert_eq!(fs::read(&icon).unwrap(), b"new icon");
+        assert!(installed.restart().unwrap_err().contains("Restored"));
+        assert_eq!(fs::read(icon).unwrap(), b"old icon");
+        assert_eq!(fs::read(&target).unwrap(), fs::read(old).unwrap());
+        assert_eq!(
+            fs::read(dir.path().join("share/applications/signal-forge.desktop")).unwrap(),
+            launcher
+        );
+        assert_eq!(
+            fs::read(dir.path().join(desktop::MANIFEST)).unwrap(),
+            manifest
+        );
+    }
     fn fixture(directory: &Path, name: &str, version: &str) -> PathBuf {
         let path = directory.join(name);
         let source = directory.join(format!("{name}.rs"));
@@ -640,6 +830,7 @@ mod tests {
             version: Version::new(1, 0, 0),
             binary: binary.into_temp_path(),
             target: target.to_path_buf(),
+            assets: None,
         }
     }
     #[test]

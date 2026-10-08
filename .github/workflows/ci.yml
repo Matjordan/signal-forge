@@ -17,7 +17,7 @@ jobs:
       - name: Set version for this build
         run: python3 scripts/release-version.py --apply
       - name: Install Linux native dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick xdotool
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick xdotool desktop-file-utils
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check Rust formatting
@@ -55,6 +55,7 @@ jobs:
           test -f "$RUNNER_TEMP/signal-forge-install/share/applications/signal-forge.desktop"
           test -f "$RUNNER_TEMP/signal-forge-install/share/doc/signal-forge/docs/workbench.jpg"
           test -f "$RUNNER_TEMP/signal-forge-install/share/doc/signal-forge/docs/manual-smoke-test.md"
+          python3 "$GITHUB_WORKSPACE/scripts/test-installation.py" "$PWD"
       - uses: actions/upload-artifact@v4
         with:
           name: signal-forge-linux-x86_64

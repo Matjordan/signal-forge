@@ -57,6 +57,10 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-update-') as directory:
         assert window, 'Ready signal arrived without a visible workbench'
         assert not select.select([master], [], [], .3)[0], 'Restart sent serial data'
         assert 'Opened ' not in log_path.read_text(), 'Restart reconnected a device'
+        icon_property = subprocess.check_output(['xprop', '-id', window, '_NET_WM_ICON'], text=True)
+        assert '256 x 256' in icon_property, 'Application window icon was not installed'
+        window_class = subprocess.check_output(['xprop', '-id', window, 'WM_CLASS'], text=True)
+        assert 'signal-forge' in window_class, window_class
         subprocess.run(['xdotool', 'windowfocus', '--sync', window], check=True)
         subprocess.run(['xdotool', 'key', '--window', window, 'ctrl+q'], check=True)
         assert process.wait(timeout=5) == 0
