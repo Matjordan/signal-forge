@@ -45,14 +45,13 @@ impl From<&SerialSettings> for SerialFraming {
     }
 }
 impl SerialFraming {
-    pub fn wire_seconds(self, byte_count: u64) -> Option<f64> {
+    pub fn frame_bits(self) -> Option<u8> {
         (self.baud > 0 && (5..=8).contains(&self.data_bits) && (1..=2).contains(&self.stop_bits))
-            .then(|| {
-                byte_count as f64
-                    * (1 + self.data_bits + u8::from(self.parity != Parity::None) + self.stop_bits)
-                        as f64
-                    / self.baud as f64
-            })
+            .then(|| 1 + self.data_bits + u8::from(self.parity != Parity::None) + self.stop_bits)
+    }
+    pub fn wire_seconds(self, byte_count: u64) -> Option<f64> {
+        self.frame_bits()
+            .map(|bits| byte_count as f64 * bits as f64 / self.baud as f64)
     }
     pub fn label(self) -> String {
         let parity = match self.parity {

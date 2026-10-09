@@ -25,13 +25,21 @@ impl Workbench {
             } else {
                 Some(Path::new(&self.pair_directory))
             };
-            match VirtualPair::create(&self.pair_name, directory) {
+            let timing = if self.pair_emulated {
+                signal_forge::virtual_pair::LinkTiming::Emulated(SerialFraming::from(
+                    &self.pair_framing,
+                ))
+            } else {
+                signal_forge::virtual_pair::LinkTiming::Unlimited
+            };
+            match VirtualPair::create_with_timing(&self.pair_name, directory, timing) {
                 Ok(pair) => {
                     log::info!(
-                        "Created PTY pair {}: {} <-> {}",
+                        "Created PTY pair {}: {} <-> {} · {}",
                         pair.name,
                         pair.paths[0],
-                        pair.paths[1]
+                        pair.paths[1],
+                        pair.timing.label()
                     );
                     self.pairs.push(pair);
                     self.error = None;
@@ -135,19 +143,51 @@ impl Workbench {
         for (index, pair) in self.pairs.iter().enumerate() {
             ui.push_id(index, |ui| {
                 ui.label(format!("{} · {:?}", pair.name, pair.state()));
+                ui.small(pair.timing.label());
                 for (side, path) in pair.paths.iter().enumerate() {
                     ui.small(format!("{}: {path}", if side == 0 { "A" } else { "B" }));
-                    ui.horizontal(|ui| {
-                        if ui
-                            .small_button(format!("Open {}", if side == 0 { "A" } else { "B" }))
-                            .clicked()
-                        {
+                    let owned = self.dock.iter_all_tabs().any(|(_, tab)| {
+                        [path, &pair.raw_paths[side]].contains(&&tab.settings.path)
+                            && matches!(
+                                tab.endpoint.state(),
+                                ConnectionState::Connected | ConnectionState::Connecting
+                            )
+                    });
+                    ui.small(if owned {
+                        "In use by Signal Forge; external apps should use the peer"
+                    } else {
+                        "Available to open in Signal Forge or an external app"
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let response = ui.small_button(format!(
+                            "Open {}",
+                            if side == 0 { "A" } else { "B" }
+                        ));
+                        let center = response.rect.center() * ui.ctx().pixels_per_point();
+                        log::debug!("PTY open control {path}: {},{}", center.x, center.y);
+                        if response.clicked() {
                             open = Some(path.clone());
                         }
                         if ui.small_button("Copy path").clicked() {
                             ui.ctx().copy_text(path.clone());
                         }
+                        if ui.add_enabled(!owned, egui::Button::new("Release stale exclusive flag")).on_hover_text("Use only after the external client exits. This releases TIOCEXCL without sudo; it does not override advisory locks. Releasing a live client can permit conflicting opens.").clicked() {
+                            if let Err(error)=pair.release_exclusive(side) { self.error=Some(error); }
+                            self.pair_diagnostics=pair.diagnostics();
+                        }
                     });
+                }
+                if ui.small_button("Check paths/access").clicked() {
+                    self.pair_diagnostics = pair.diagnostics();
+                }
+                for diagnostic in self
+                    .pair_diagnostics
+                    .iter()
+                    .filter(|diagnostic| pair.paths.contains(&diagnostic.path))
+                {
+                    ui.small(format!("{} → {}", diagnostic.path, diagnostic.target));
+                    ui.small(&diagnostic.permissions);
+                    ui.small(&diagnostic.access);
                 }
                 if ui.small_button("Remove pair").clicked() {
                     remove = Some(index);
@@ -155,7 +195,23 @@ impl Workbench {
             });
         }
         if let Some(path) = open {
-            self.settings.path = path;
+            // PTY settings are separate from shared link emulation. Do not inherit
+            // hardware/software flow control from the last physical/remote device.
+            let baud = self
+                .pairs
+                .iter()
+                .find(|pair| pair.paths.contains(&path))
+                .and_then(|pair| match pair.timing {
+                    signal_forge::virtual_pair::LinkTiming::Emulated(frame) => Some(frame.baud),
+                    _ => None,
+                })
+                .unwrap_or(19200);
+            self.settings = SerialSettings {
+                path,
+                baud,
+                ..Default::default()
+            };
+            self.baud_control = BaudControl::new(baud);
             self.connect();
         }
         if let Some(index) = remove {

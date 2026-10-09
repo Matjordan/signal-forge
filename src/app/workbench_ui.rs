@@ -14,6 +14,9 @@ pub(super) struct SetupDialog {
     settings: SerialSettings,
     baud: BaudControl,
     pair_name: String,
+    pair_emulated: bool,
+    pair_framing: SerialSettings,
+    pair_baud: BaudControl,
     directory: String,
     a: Option<EndpointId>,
     b: Option<EndpointId>,
@@ -73,6 +76,9 @@ impl Workbench {
             settings: self.settings.clone(),
             baud: BaudControl::new(self.settings.baud),
             pair_name: self.pair_name.clone(),
+            pair_emulated: self.pair_emulated,
+            pair_framing: self.pair_framing.clone(),
+            pair_baud: BaudControl::new(self.pair_framing.baud),
             directory: self.pair_directory.clone(),
             a: self.bridge_a.clone().or_else(|| connected.first().cloned()),
             b: self.bridge_b.clone().or_else(|| connected.get(1).cloned()),
@@ -435,6 +441,16 @@ impl Workbench {
                     ui.label("Pair name"); ui.text_edit_singleline(&mut dialog.pair_name);
                     ui.label("Link directory (optional)"); ui.text_edit_singleline(&mut dialog.directory);
                     ui.weak("Creates two linked raw PTYs. Existing paths are never overwritten.");
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut dialog.pair_emulated, false, "Unlimited");
+                        ui.selectable_value(&mut dialog.pair_emulated, true, "Emulated baud");
+                    });
+                    if dialog.pair_emulated {
+                        ui.label("Shared link timing · independent full-duplex directions");
+                        pair_timing_form(ui, &mut dialog.pair_framing, &mut dialog.pair_baud);
+                        ui.weak("Software pacing; desktop scheduler jitter is expected. Framing sets delay, never changes byte values.");
+                    }
+                    ui.weak("For an external application, open only its peer in Signal Forge. One client per side; no sudo required.");
                 }
                 SetupKind::Bridge => {
                     let endpoints: Vec<_> = self.dock.iter_all_tabs().filter(|(_, t)| t.endpoint.state() == ConnectionState::Connected).map(|(_, t)| (t.endpoint.id().clone(), t.endpoint.display_name().to_owned())).collect();
@@ -488,6 +504,15 @@ impl Workbench {
                     self.connect();
                 }
                 SetupKind::Pair => {
+                    if dialog.pair_emulated {
+                        if let Err(error) = dialog.pair_baud.validate() {
+                            dialog.error = Some(error.into());
+                            self.setup = Some(dialog);
+                            return;
+                        }
+                    }
+                    self.pair_emulated = dialog.pair_emulated;
+                    self.pair_framing = dialog.pair_framing.clone();
                     self.pair_name = dialog.pair_name.clone();
                     self.pair_directory = dialog.directory.clone();
                     self.create_pair();
@@ -586,6 +611,39 @@ fn serial_form(ui: &mut egui::Ui, settings: &mut SerialSettings, baud: &mut Baud
                     FlowControl::Software,
                 ] {
                     ui.selectable_value(&mut settings.flow, flow, format!("{flow:?}"));
+                }
+            });
+    });
+}
+
+fn pair_timing_form(ui: &mut egui::Ui, settings: &mut SerialSettings, baud: &mut BaudControl) {
+    ui.horizontal(|ui| {
+        ui.label("Baud");
+        baud.ui(ui, &mut settings.baud);
+    });
+    ui.horizontal(|ui| {
+        ui.label("Data bits");
+        egui::ComboBox::from_id_salt("pair-data-bits")
+            .selected_text(settings.data_bits.to_string())
+            .show_ui(ui, |ui| {
+                for value in 5..=8 {
+                    ui.selectable_value(&mut settings.data_bits, value, value.to_string());
+                }
+            });
+        ui.label("Parity");
+        egui::ComboBox::from_id_salt("pair-parity")
+            .selected_text(format!("{:?}", settings.parity))
+            .show_ui(ui, |ui| {
+                for value in [Parity::None, Parity::Odd, Parity::Even] {
+                    ui.selectable_value(&mut settings.parity, value, format!("{value:?}"));
+                }
+            });
+        ui.label("Stop bits");
+        egui::ComboBox::from_id_salt("pair-stop-bits")
+            .selected_text(settings.stop_bits.to_string())
+            .show_ui(ui, |ui| {
+                for value in 1..=2 {
+                    ui.selectable_value(&mut settings.stop_bits, value, value.to_string());
                 }
             });
     });
