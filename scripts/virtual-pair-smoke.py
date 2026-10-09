@@ -6,7 +6,7 @@ import re
 import subprocess
 import tempfile
 import time
-from gui_smoke_support import click, window_for
+from gui_smoke_support import click, click_control, window_for
 
 assert os.geteuid() != 0, 'Run virtual-pair smoke without sudo/root'
 with tempfile.TemporaryDirectory(prefix='signal-forge-virtual-ui-') as directory:
@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-virtual-ui-') as directory
                 time.sleep(.02)
         try:
             key('ctrl+shift+n')
-            click(window, 650, 490)  # Emulated baud, default 19200 8N1
+            click_control(window, log_path, 'Emulated baud')  # Emulated baud, default 19200 8N1
             key('ctrl+Return')
             wait(lambda: 'Created PTY pair bench:' in log_path.read_text())
             match = re.search(r'Created PTY pair bench: (\S+) <-> (\S+)', log_path.read_text())
@@ -60,12 +60,12 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-virtual-ui-') as directory
                 os.close(unexpected)
                 raise AssertionError('Signal Forge did not hold expected same-side exclusivity')
             peer = os.open(paths[1], os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-            click(window, 430, 786)  # Files / RX
+            click_control(window, log_path, 'serial:' + paths[0] + ':Files / RX')  # Files / RX
             recording = root / 'paced.bin'
-            click(window, 330, 734)
+            click_control(window, log_path, 'RX path')
             key('ctrl+a')
             subprocess.run(['xdotool', 'type', '--window', window, '--clearmodifiers', str(recording)], check=True)
-            click(window, 525, 734)
+            click_control(window, log_path, 'Record RX')
             wait(recording.exists)
             payload = bytes(range(256)) * 3
             started = time.monotonic()

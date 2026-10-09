@@ -38,3 +38,26 @@ def window_for(process, timeout=10):
                 last_error = 'Application window did not retain keyboard focus'
         time.sleep(.1)
     raise AssertionError(f'Application window was not ready within {timeout}s: {last_error}')
+
+
+def click_control(window, log_path, key, timeout=5):
+    """Click a named control using its last rendered pixel coordinates."""
+    import re
+    pattern = re.compile(r'UI control ' + re.escape(key) + r': ([\d.]+),([\d.]+)')
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        matches = list(pattern.finditer(log_path.read_text()))
+        if matches:
+            click(window, *(round(float(value)) for value in matches[-1].groups()))
+            return
+        time.sleep(.05)
+    raise AssertionError(f'Control was not rendered: {key}')
+
+
+def pane_bounds(log_path, key):
+    """Return the most recent terminal content rectangle in window pixels."""
+    import re
+    pattern = re.compile(r'UI pane ' + re.escape(key) + r': ([\d.]+),([\d.]+),([\d.]+),([\d.]+)')
+    matches = list(pattern.finditer(log_path.read_text()))
+    assert matches, f'No rendered pane: {key}'
+    return tuple(round(float(value)) for value in matches[-1].groups())

@@ -292,7 +292,13 @@ impl TerminalViewer<'_> {
     pub(super) fn analysis_controls(ui: &mut egui::Ui, tab: &mut Terminal) {
         ui.push_id(("terminal-analysis", tab.endpoint.id().clone()), |ui| {
             let old = tab.analysis.clone();
-            ui.menu_button("Analysis…", |ui| {
+            let label = if ui.max_rect().width() < 450.0 {
+                "Analysis"
+            } else {
+                "Analysis…"
+            };
+            ui.menu_button(label, |ui| {
+                ui.style_mut().wrap_mode = None;
                 egui::ScrollArea::vertical()
                     .id_salt("analysis-options")
                     .max_height(
@@ -394,7 +400,13 @@ impl TerminalViewer<'_> {
                 tab.view.dirty = true;
                 tab.selection.clear();
             }
-            ui.menu_button("Statistics…", |ui| {
+            let label = if ui.max_rect().width() < 450.0 {
+                "Stats"
+            } else {
+                "Statistics…"
+            };
+            ui.menu_button(label, |ui| {
+                ui.style_mut().wrap_mode = None;
                 let now = std::time::Instant::now();
                 let stats = &tab.statistics;
                 ui.label("Statistics since creation / last reset");

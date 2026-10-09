@@ -185,7 +185,7 @@ impl Workbench {
                     if ui.button("Copy folder path").clicked() {
                         ui.ctx().copy_text(session.root.display().to_string());
                     }
-                    if ui.button("Close session").clicked() {
+                    if theme::button(ui, "Close session").clicked() {
                         action = 4;
                     }
                     if ui.button("Copy notes").clicked() {
@@ -203,15 +203,16 @@ impl Workbench {
                     .id_salt("session-notes-scroll")
                     .max_height(160.0)
                     .show(ui, |ui| {
-                        if ui
-                            .add(
-                                egui::TextEdit::multiline(&mut session.notes)
-                                    .id(egui::Id::new("session-notes"))
-                                    .desired_width(f32::INFINITY)
-                                    .desired_rows(6)
-                                    .char_limit(1024 * 1024),
-                            )
-                            .changed()
+                        if theme::control(
+                            ui,
+                            "Session notes",
+                            egui::TextEdit::multiline(&mut session.notes)
+                                .id(egui::Id::new("session-notes"))
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(6)
+                                .char_limit(1024 * 1024),
+                        )
+                        .changed()
                         {
                             self.session_ui.edited = Some(Instant::now());
                         }
@@ -266,18 +267,38 @@ impl Workbench {
                     });
             } else {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.session_ui.create, true, "New session");
-                    ui.selectable_value(&mut self.session_ui.create, false, "Open session");
+                    theme::tab_value(
+                        ui,
+                        &mut self.session_ui.create,
+                        true,
+                        "New session",
+                        "New session",
+                    );
+                    theme::tab_value(
+                        ui,
+                        &mut self.session_ui.create,
+                        false,
+                        "Open session",
+                        "Open session",
+                    );
                 });
                 if self.session_ui.create {
                     ui.label("Session name");
-                    ui.text_edit_singleline(&mut self.session_ui.name);
+                    theme::control(
+                        ui,
+                        "Session name",
+                        egui::TextEdit::singleline(&mut self.session_ui.name),
+                    );
                     ui.weak("Choose a new or empty folder. Enter a new folder path to create it.");
                 } else {
                     ui.weak("Choose a folder containing session.json; its workspace restores disconnected.");
                 }
                 ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut self.session_ui.folder);
+                    theme::control(
+                        ui,
+                        "Session folder",
+                        egui::TextEdit::singleline(&mut self.session_ui.folder),
+                    );
                     if ui.button("Choose folder…").clicked() {
                         let mut dialog = egui_file_dialog::FileDialog::new()
                             .id(egui::Id::new("session-folder-picker"))
@@ -286,13 +307,15 @@ impl Workbench {
                         self.session_ui.picker = Some(dialog);
                     }
                 });
-                if ui
-                    .button(if self.session_ui.create {
+                if theme::button(
+                    ui,
+                    if self.session_ui.create {
                         "Create session"
                     } else {
                         "Open session folder"
-                    })
-                    .clicked()
+                    },
+                )
+                .clicked()
                 {
                     action = if self.session_ui.create { 1 } else { 2 };
                 }

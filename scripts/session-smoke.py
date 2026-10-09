@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 import tty
-from gui_smoke_support import click, window_for
+from gui_smoke_support import click, click_control, window_for
 
 master, slave = pty.openpty()
 tty.setraw(slave)
@@ -26,8 +26,8 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-session-') as directory:
         subprocess.run(['xdotool', 'key', '--window', window, '--clearmodifiers', keys], check=True)
         time.sleep(.2)
 
-    def text(x, y, value):
-        click(window, x, y)
+    def text(control, value):
+        click_control(window, log_path, control)
         key('ctrl+a')
         subprocess.run(['xdotool', 'type', '--window', window, '--clearmodifiers', '--delay', '2', value], check=True)
         time.sleep(.2)
@@ -45,21 +45,21 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-session-') as directory:
     try:
         # The dedicated session shortcut keeps this test independent of toolbar width.
         key('ctrl+shift+e')
-        click(window, 60, 95)  # New session
-        text(100, 133, 'Engineering run')
-        text(100, 173, str(folder))
-        click(window, 75, 195)
+        click_control(window, log_path, 'New session')  # New session
+        text('Session name', 'Engineering run')
+        text('Session folder', str(folder))
+        click_control(window, log_path, 'Create session')
         wait(lambda: (folder / 'session.json').exists())
         assert metadata()['name'] == 'Engineering run'
-        text(120, 210, 'Pressure test: 12 kPa')
+        text('Session notes', 'Pressure test: 12 kPa')
         key('Return')
         subprocess.run(['xdotool', 'type', '--window', window, '--clearmodifiers', 'Binary data verified.'], check=True)
         notes = 'Pressure test: 12 kPa\nBinary data verified.'
         wait(lambda: (folder / 'notes.txt').read_text() == notes)
         assert not select.select([master], [], [], .1)[0], 'Typing session notes transmitted serial data'
         key('ctrl+shift+e')
-        click(window, 430, 786)  # Files / RX tool, single terminal at default size
-        click(window, 525, 734)  # Record RX, using session's generated default path
+        click_control(window, log_path, 'serial:' + os.ttyname(slave) + ':Files / RX')  # Files / RX tool, single terminal at default size
+        click_control(window, log_path, 'Record RX')  # Record RX, using session's generated default path
         wait(lambda: len(metadata()['artifacts']) == 1)
         artifact = metadata()['artifacts'][0]
         assert artifact['kind'] == 'rx_recording'
@@ -70,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-session-') as directory:
         wait(lambda: recording.read_bytes() == payload)
         key('ctrl+shift+e')
         subprocess.run(['import', '-window', window, '/tmp/signal-forge-session.png'], check=True)
-        click(window, 380, 135)  # Close session: finalizes active RX recorder
+        click_control(window, log_path, 'Close session')  # Close session: finalizes active RX recorder
         wait(lambda: metadata()['closed_unix_ns'] is not None)
         assert recording.read_bytes() == payload
         # Closing a session leaves the live endpoint usable.
@@ -83,8 +83,8 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-session-') as directory:
         assert os.read(master, 64) == b'still-connected'
         # Reopen explicitly, restoring the snapshot disconnected and preserving notes/index.
         key('ctrl+shift+e')
-        click(window, 150, 95)  # Open session
-        click(window, 100, 153)
+        click_control(window, log_path, 'Open session')  # Open session
+        click_control(window, log_path, 'Open session folder')
         wait(lambda: metadata()['closed_unix_ns'] is None)
         assert (folder / 'notes.txt').read_text() == notes
         assert len(metadata()['artifacts']) == 1
@@ -96,7 +96,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-session-') as directory:
         # Missing artifacts remain indexed, and reopening does not delete or recreate them.
         preserved = recording.with_suffix('.preserved')
         recording.rename(preserved)
-        text(100, 210, 'Notes saved during shutdown')
+        text('Session notes', 'Notes saved during shutdown')
         # A conflicting external edit must be preserved, and close must be cancelled.
         (folder / 'notes.txt').write_text('Edited externally')
         key('ctrl+s')
@@ -119,9 +119,9 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-session-') as directory:
         assert log_path.read_text().count('Opened ') == 1, 'Restart reconnected a device'
         key('ctrl+shift+e')
         # No session automatically resumes; choose it explicitly, with the missing artifact retained.
-        click(window, 100, 133)
-        text(100, 133, str(folder))
-        click(window, 100, 153)
+        click_control(window, log_path, 'Session folder')
+        text('Session folder', str(folder))
+        click_control(window, log_path, 'Open session folder')
         wait(lambda: metadata()['closed_unix_ns'] is None)
         assert len(metadata()['artifacts']) == 1 and not recording.exists()
         assert not select.select([master], [], [], .1)[0]
