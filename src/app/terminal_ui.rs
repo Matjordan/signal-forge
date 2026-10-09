@@ -21,6 +21,7 @@ impl TerminalViewer<'_> {
     pub(super) fn serial_settings(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         ui.push_id(tab.endpoint.id().0.clone(), |ui| {
             ui.horizontal_wrapped(|ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 let connected = matches!(
                     tab.endpoint.state(),
                     ConnectionState::Connected | ConnectionState::Connecting
@@ -88,10 +89,49 @@ impl TerminalViewer<'_> {
         let previous_mode = tab.receive_mode;
         let old_analysis = tab.analysis.clone();
         ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Line, "Line");
-            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::RawChunks, "Raw Chunks");
-            ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Hex, "Hex");
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            if ui.max_rect().width() < 450.0 {
+                egui::ComboBox::from_id_salt((tab.endpoint.id().clone(), "compact-receive"))
+                    .width(85.0)
+                    .selected_text(match tab.receive_mode {
+                        ReceiveMode::Line => "Line",
+                        ReceiveMode::RawChunks => "Chunks",
+                        ReceiveMode::Hex => "Hex",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Line, "Line");
+                        ui.selectable_value(
+                            &mut tab.receive_mode,
+                            ReceiveMode::RawChunks,
+                            "Raw Chunks",
+                        );
+                        ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Hex, "Hex");
+                    });
+            } else {
+                theme::tab_value(
+                    ui,
+                    &mut tab.receive_mode,
+                    ReceiveMode::Line,
+                    "Line",
+                    &format!("{}:Line", tab.endpoint.id().0),
+                );
+                theme::tab_value(
+                    ui,
+                    &mut tab.receive_mode,
+                    ReceiveMode::RawChunks,
+                    "Raw Chunks",
+                    &format!("{}:Raw Chunks", tab.endpoint.id().0),
+                );
+                theme::tab_value(
+                    ui,
+                    &mut tab.receive_mode,
+                    ReceiveMode::Hex,
+                    "Hex",
+                    &format!("{}:Hex", tab.endpoint.id().0),
+                );
+            }
             ui.menu_button("Display…", |ui| {
+                ui.style_mut().wrap_mode = None;
                 let previous = tab.lines.delimiter;
                 egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "receive-delimiter"))
                     .width(55.0)
@@ -173,7 +213,7 @@ impl TerminalViewer<'_> {
             if tab.paused {
                 ui.colored_label(theme::WARNING, "Paused");
             }
-            if ui.available_width() >= 110.0 {
+            if ui.max_rect().width() >= 450.0 && ui.available_width() >= 110.0 {
                 ui.label(
                     RichText::new(format!("RX {} B · TX {} B", tab.rx_bytes, tab.tx_bytes))
                         .small()
@@ -189,6 +229,7 @@ impl TerminalViewer<'_> {
 
     pub(super) fn connection_status(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         ui.horizontal_wrapped(|ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             let connected = matches!(tab.endpoint.state(), ConnectionState::Connected | ConnectionState::Connecting);
             let (state, color) = match tab.endpoint.state() {
                 ConnectionState::Connected => ("Connected", theme::CONNECTED),
@@ -196,13 +237,15 @@ impl TerminalViewer<'_> {
                 ConnectionState::Disconnected => ("Disconnected", theme::MUTED),
                 ConnectionState::Fault(_) => ("Fault", theme::ERROR),
             };
-            ui.colored_label(color, state).on_hover_text(format!("{:?}", tab.endpoint.state()));
-            ui.label(RichText::new(if tab.endpoint.read_only() { "Read-only replay source".into() } else { workbench_ui::framing(&tab.settings) }).small().color(theme::MUTED));
+            theme::status_dot(ui, color);
+            ui.colored_label(color, state).on_hover_text(format!("{:?} · {}", tab.endpoint.state(), workbench_ui::framing(&tab.settings)));
+            if ui.max_rect().width() >= 450.0 { ui.label(RichText::new(if tab.endpoint.read_only() { "Read-only replay source".into() } else { workbench_ui::framing(&tab.settings) }).small().color(theme::MUTED)); }
             if let Some(framing)=tab.link_framing { ui.small(format!("Emulated link · {}",framing.label())); }
             if !tab.endpoint.read_only() && ui.selectable_label(tab.show_settings, "Settings").clicked() { tab.show_settings = !tab.show_settings; }
+                if ui.max_rect().width() >= 450.0 { ui.add_space((ui.available_size_before_wrap().x - 104.0 - ui.spacing().item_spacing.x).max(0.0)); }
                 if ui
                     .add(
-                        theme::primary_button(if connected { "Disconnect" } else { "Reconnect" }),
+                        theme::primary_button(if connected { "Disconnect" } else { "Reconnect" }).min_size(egui::vec2(if ui.max_rect().width() >= 450.0 { 104.0 } else { 84.0 }, 30.0)),
                     )
                     .on_hover_text("Disconnect stops repeats and attached bridges; capture finishes. Reconnect explicitly opens this device.")
                     .clicked()
@@ -238,7 +281,12 @@ impl TerminalViewer<'_> {
             TerminalTool::Files => 240.0,
             TerminalTool::Capture => 240.0,
         };
-        let terminal_height = (ui.available_height() - theme::SEND_AREA_HEIGHT - extra).max(40.0);
+        let reserved = if ui.available_width() < 450.0 {
+            100.0
+        } else {
+            theme::SEND_AREA_HEIGHT
+        };
+        let terminal_height = (ui.available_height() - reserved - extra).max(24.0);
         if !ui.input(|input| input.pointer.primary_down()) {
             tab.selection.dragging = false;
         }
@@ -389,7 +437,7 @@ impl TerminalViewer<'_> {
         } else {
             ""
         };
-        let font = egui::FontId::monospace(12.0);
+        let font = egui::FontId::monospace(13.0);
         let mut text = egui::text::LayoutJob::default();
         text.append(
             &time,
@@ -436,7 +484,11 @@ impl TerminalViewer<'_> {
             0.0,
             egui::TextFormat {
                 font_id: font,
-                color,
+                color: if direction == Direction::Rx {
+                    theme::TEXT
+                } else {
+                    theme::TX
+                },
                 ..Default::default()
             },
         );
@@ -476,7 +528,7 @@ impl TerminalViewer<'_> {
                     &format!("  [{}]", annotations.join(" · ")),
                     0.0,
                     egui::TextFormat {
-                        font_id: egui::FontId::monospace(12.0),
+                        font_id: egui::FontId::monospace(13.0),
                         color: theme::MUTED,
                         ..Default::default()
                     },
@@ -610,16 +662,66 @@ impl TerminalViewer<'_> {
 
     pub(super) fn tool_strip(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut tab.tool, TerminalTool::Send, "Send");
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             let active = tab.repeat.as_ref().is_some_and(|handle| handle.is_active());
-            ui.selectable_value(
-                &mut tab.tool,
-                TerminalTool::Repeat,
-                if active { "Repeat (active)" } else { "Repeat" },
-            );
-            ui.selectable_value(&mut tab.tool, TerminalTool::Presets, "Presets");
-            ui.selectable_value(&mut tab.tool, TerminalTool::Files, "Files / RX");
-            ui.selectable_value(&mut tab.tool, TerminalTool::Capture, "Triggered capture");
+            if ui.max_rect().width() < 450.0 {
+                egui::ComboBox::from_id_salt((tab.endpoint.id().clone(), "compact-tools"))
+                    .width(145.0)
+                    .selected_text(match tab.tool {
+                        TerminalTool::Send => "Send",
+                        TerminalTool::Repeat => "Repeat",
+                        TerminalTool::Presets => "Presets",
+                        TerminalTool::Files => "Files / RX",
+                        TerminalTool::Capture => "Triggered capture",
+                    })
+                    .show_ui(ui, |ui| {
+                        for (value, label) in [
+                            (TerminalTool::Send, "Send"),
+                            (TerminalTool::Repeat, "Repeat"),
+                            (TerminalTool::Presets, "Presets"),
+                            (TerminalTool::Files, "Files / RX"),
+                            (TerminalTool::Capture, "Triggered capture"),
+                        ] {
+                            ui.selectable_value(&mut tab.tool, value, label);
+                        }
+                    });
+            } else {
+                theme::tab_value(
+                    ui,
+                    &mut tab.tool,
+                    TerminalTool::Send,
+                    "Send",
+                    &format!("{}:Send", tab.endpoint.id().0),
+                );
+                theme::tab_value(
+                    ui,
+                    &mut tab.tool,
+                    TerminalTool::Repeat,
+                    if active { "Repeat (active)" } else { "Repeat" },
+                    &format!("{}:Repeat", tab.endpoint.id().0),
+                );
+                theme::tab_value(
+                    ui,
+                    &mut tab.tool,
+                    TerminalTool::Presets,
+                    "Presets",
+                    &format!("{}:Presets", tab.endpoint.id().0),
+                );
+                theme::tab_value(
+                    ui,
+                    &mut tab.tool,
+                    TerminalTool::Files,
+                    "Files / RX",
+                    &format!("{}:Files / RX", tab.endpoint.id().0),
+                );
+                theme::tab_value(
+                    ui,
+                    &mut tab.tool,
+                    TerminalTool::Capture,
+                    "Triggered capture",
+                    &format!("{}:Triggered capture", tab.endpoint.id().0),
+                );
+            }
             if active && ui.add(theme::danger_button("Stop")).clicked() {
                 tab.stop_repeat();
             }
@@ -631,6 +733,7 @@ impl TerminalViewer<'_> {
             .max_height(65.0)
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     for preset in self.presets {
                         if ui
                             .button(&preset.name)
@@ -676,7 +779,14 @@ impl TerminalViewer<'_> {
             let input = ui.add(
                 egui::TextEdit::singleline(&mut tab.input)
                     .id(input_id)
-                    .desired_width((ui.available_width() - 60.0).max(60.0))
+                    .desired_width((ui.available_size_before_wrap().x - 120.0).max(40.0))
+                    .font(egui::TextStyle::Monospace)
+                    .background_color(theme::CARD)
+                    .margin(if ui.max_rect().width() < 450.0 {
+                        egui::vec2(6.0, 4.0)
+                    } else {
+                        egui::vec2(8.0, 8.0)
+                    })
                     .hint_text("Payload · Enter sends · Up recalls"),
             );
             // Process text events before recall so a draft includes every character
@@ -691,21 +801,45 @@ impl TerminalViewer<'_> {
             if newer && focused {
                 tab.history_newer();
             }
-            let clicked = ui
-                .add_enabled(
-                    tab.endpoint.state() == ConnectionState::Connected,
-                    theme::primary_button("Send"),
-                )
-                .clicked();
-            if clicked || (enter && focused) {
+            let response = ui.add_enabled(
+                tab.endpoint.state() == ConnectionState::Connected,
+                theme::primary_button("Send").min_size(egui::vec2(
+                    84.0,
+                    if ui.max_rect().width() < 450.0 {
+                        30.0
+                    } else {
+                        42.0
+                    },
+                )),
+            );
+            theme::trace_control(&response, &format!("{}:Send payload", tab.endpoint.id().0));
+            if response.clicked() || (enter && focused) {
                 tab.send();
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut tab.encoding, Encoding::Text, "Text");
-            ui.selectable_value(&mut tab.encoding, Encoding::Hex, "Hex bytes");
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            if ui.max_rect().width() < 450.0 {
+                egui::ComboBox::from_id_salt((tab.endpoint.id().clone(), "compact-encoding"))
+                    .width(65.0)
+                    .selected_text(match tab.encoding {
+                        Encoding::Text => "Text",
+                        Encoding::Hex => "Hex",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut tab.encoding, Encoding::Text, "Text");
+                        ui.selectable_value(&mut tab.encoding, Encoding::Hex, "Hex bytes");
+                    });
+            } else {
+                ui.selectable_value(&mut tab.encoding, Encoding::Text, "Text");
+                ui.selectable_value(&mut tab.encoding, Encoding::Hex, "Hex bytes");
+            }
             egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "ending"))
-                .selected_text(format!("Ending: {:?}", tab.ending))
+                .selected_text(if ui.max_rect().width() < 450.0 {
+                    format!("{:?}", tab.ending)
+                } else {
+                    format!("Ending: {:?}", tab.ending)
+                })
                 .show_ui(ui, |ui| {
                     for (value, label) in [
                         (LineEnding::None, "None"),
@@ -718,13 +852,21 @@ impl TerminalViewer<'_> {
                 });
             ui.add_enabled(
                 tab.encoding == Encoding::Text,
-                egui::Checkbox::new(&mut tab.escapes, "Interpret escapes"),
+                egui::Checkbox::new(
+                    &mut tab.escapes,
+                    if ui.max_rect().width() < 450.0 {
+                        "Escapes"
+                    } else {
+                        "Interpret escapes"
+                    },
+                ),
             );
         });
     }
 
     pub(super) fn repeat_panel(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         ui.horizontal_wrapped(|ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             let active = tab.repeat.as_ref().is_some_and(|handle| handle.is_active());
             ui.label("Repeat every");
             ui.add_enabled(
@@ -914,19 +1056,24 @@ impl TerminalViewer<'_> {
                 ui.selectable_value(&mut tab.recording_mode, FileMode::Hex, "Hex");
             });
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut tab.recording_path).desired_width(160.0));
+            theme::control(
+                ui,
+                "RX path",
+                egui::TextEdit::singleline(&mut tab.recording_path).desired_width(160.0),
+            );
             if ui.button("Save as…").clicked() {
                 Self::open_file_dialog(tab, true);
             }
             if ui
-                .add_enabled(
+                .add_enabled_ui(
                     tab.endpoint.state() == ConnectionState::Connected
                         && !tab
                             .recording
                             .as_ref()
                             .is_some_and(|recording| recording.is_active()),
-                    egui::Button::new("Record RX"),
+                    |ui| theme::button(ui, "Record RX"),
                 )
+                .inner
                 .clicked()
             {
                 if let Some(recording) = &mut tab.recording {

@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 import tty
-from gui_smoke_support import click, window_for as ready_window
+from gui_smoke_support import click, click_control, pane_bounds, window_for as ready_window
 
 pairs = [pty.openpty(), pty.openpty()]
 for master, slave in pairs:
@@ -29,7 +29,7 @@ def quit_app(process, window):
     assert process.wait(timeout=5) == 0
 
 with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
-    env = dict(os.environ, XDG_CONFIG_HOME=directory)
+    env = dict(os.environ, XDG_CONFIG_HOME=directory, RUST_LOG='signal_forge=debug')
     config_path = Path(directory) / 'signal-forge/workspace.json'
     log = open(Path(directory) / 'app.log', 'w')
     process = None
@@ -43,11 +43,15 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         for chunk in [b'STA', b'TUS=OK\r', b'\nPART']:
             os.write(pairs[0][0], chunk)
             time.sleep(.05)
-        for x in [330, 385, 268, 330]:  # Left: Raw Chunks -> Hex -> Line -> Raw Chunks.
-            click(window, x, 97)
-        click(window, 985, 97)
+        log_path = Path(directory) / 'app.log'
+        for mode in ['Raw Chunks', 'Hex', 'Line', 'Raw Chunks']:
+            click_control(window, log_path, 'serial:' + os.ttyname(pairs[0][1]) + ':' + mode)
+        click_control(window, log_path, 'serial:' + os.ttyname(pairs[1][1]) + ':Hex')
         # Change split ratio with the visible divider, then save via keyboard.
-        subprocess.run(['xdotool', 'mousemove', '--window', window, '844', '350', 'mousedown', '1', 'sleep', '0.2', 'mousemove', '--window', window, '740', '350', 'sleep', '0.2', 'mouseup', '1'], check=True)
+        first = pane_bounds(log_path, 'serial:' + os.ttyname(pairs[0][1]))
+        second = pane_bounds(log_path, 'serial:' + os.ttyname(pairs[1][1]))
+        divider = round((first[2] + second[0]) / 2)
+        subprocess.run(['xdotool', 'mousemove', '--window', window, str(divider), '350', 'mousedown', '1', 'sleep', '0.2', 'mousemove', '--window', window, str(divider - 100), '350', 'sleep', '0.2', 'mouseup', '1'], check=True)
         key(window, 'ctrl+s')
         initial = json.loads(config_path.read_text())
         assert initial['version'] == 2
@@ -87,7 +91,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         key(window, 'ctrl+s')
         assert config_path.read_bytes() == broken
         # Recovery action appears immediately below the bottom error line.
-        click(window, 150, 890)
+        click_control(window, log_path, 'Back up original and reset workspace')
         time.sleep(.3)
         # Coordinates are verified by the required backup, not assumed successful.
         backups = list(config_path.parent.glob('workspace.json.recovery-*'))

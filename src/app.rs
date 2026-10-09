@@ -259,16 +259,45 @@ struct TerminalViewer<'a> {
 impl TabViewer for TerminalViewer<'_> {
     type Tab = Terminal;
     fn title(&mut self, tab: &mut Terminal) -> egui::WidgetText {
+        RichText::new(format!("    {}", tab.endpoint.display_name()))
+            .color(theme::TEXT)
+            .into()
+    }
+    fn on_tab_button(&mut self, tab: &mut Terminal, response: &egui::Response) {
         let color = if tab.endpoint.state() == ConnectionState::Connected {
             theme::CONNECTED
         } else {
             theme::MUTED
         };
-        RichText::new(format!("{}", tab.endpoint.display_name()))
-            .color(color)
-            .into()
+        response.ctx.layer_painter(response.layer_id).circle_filled(
+            egui::pos2(response.rect.left() + 11.0, response.rect.center().y),
+            4.5,
+            color,
+        );
     }
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        let rect = ui.max_rect();
+        let scale = ui.ctx().pixels_per_point();
+        log::debug!(
+            "UI pane {}: {},{},{},{}",
+            tab.endpoint.id().0,
+            rect.left() * scale,
+            rect.top() * scale,
+            rect.right() * scale,
+            rect.bottom() * scale
+        );
+        if ui.available_width() < 450.0 {
+            let style = ui.style_mut();
+            style.spacing.interact_size.y = 22.0;
+            style.spacing.button_padding = egui::vec2(6.0, 2.0);
+            style.spacing.item_spacing = egui::vec2(6.0, 3.0);
+            style
+                .text_styles
+                .insert(egui::TextStyle::Button, egui::FontId::proportional(12.0));
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(13.0));
+        }
         self.selection(ui, tab);
         self.connection_status(ui, tab);
         if tab.show_settings {
@@ -584,7 +613,7 @@ impl eframe::App for Workbench {
             if let Some(error) = &self.error {
                 ui.colored_label(theme::ERROR, error);
             }
-            if !self.config_recoverable && ui.button("Back up original and reset workspace").clicked() {
+            if !self.config_recoverable && theme::button(ui, "Back up original and reset workspace").clicked() {
                 match WorkspaceConfig::backup_for_recovery() {
                     Ok(path) => { self.config_recoverable = true; self.error = Some(format!("Original workspace preserved at {}. Save to write the current workspace.", path.display())); }
                     Err(error) => self.error = Some(error),

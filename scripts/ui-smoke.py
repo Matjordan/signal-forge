@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 import tty
-from gui_smoke_support import window_for
+from gui_smoke_support import window_for, click_control
 
 pairs = [pty.openpty() for _ in range(4)]
 for master, slave in pairs:
@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-ui-') as directory:
     for _, slave in pairs:
         args.extend(['--port', os.ttyname(slave)])
     with log_path.open('w') as log:
-        process = subprocess.Popen(args, env=dict(os.environ, XDG_CONFIG_HOME=directory), stderr=log)
+        process = subprocess.Popen(args, env=dict(os.environ, XDG_CONFIG_HOME=directory, RUST_LOG='signal_forge=debug'), stderr=log)
         try:
             window = window_for(process)
             time.sleep(.5)
@@ -54,7 +54,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-ui-') as directory:
                 os.write(master, f'Device {index + 1}: ready at 19200\r\n'.encode())
             command('mousemove', '--window', window, '400', '200', 'click', '1')
             time.sleep(.2)
-            command('mousemove', '--window', window, '627', '14', 'click', '1')
+            click_control(window, log_path, '4 Tiles')
             time.sleep(.3)
             initial = snapshot(config)
             assert leaf_count(initial['layout']) == 4, initial
@@ -79,6 +79,11 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-ui-') as directory:
             selected_master = next(master for master, slave in pairs if os.ttyname(slave) == initial['selected'])
             assert select.select([selected_master], [], [], 3)[0], 'Narrow-pane send failed'
             assert os.read(selected_master, 64) == b'minimum-window'
+            key('ctrl+a')
+            command('type', '--window', window, '--clearmodifiers', 'minimum-button')
+            click_control(window, log_path, 'serial:' + initial['selected'] + ':Send payload')
+            assert select.select([selected_master], [], [], 3)[0], 'Narrow-pane Send button failed'
+            assert os.read(selected_master, 64) == b'minimum-button'
             # Leave text editing before opening focused setup workflows.
             command('mousemove', '--window', window, '400', '200', 'click', '1')
             time.sleep(.2)
@@ -89,7 +94,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-ui-') as directory:
                 assert snapshot(config) == before, shortcut
             assert 'Created PTY pair' not in log_path.read_text(), 'Cancel created a pair'
             assert log_path.read_text().count('Opened ') == 4, 'Cancel reopened a device'
-            command('mousemove', '--window', window, '575', '14', 'click', '1')
+            click_control(window, log_path, '2 Tiles')
             time.sleep(.3)
             tiled = snapshot(config)
             assert leaf_count(tiled['layout']) == 2

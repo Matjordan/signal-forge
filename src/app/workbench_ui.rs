@@ -91,19 +91,15 @@ impl Workbench {
     pub(super) fn toolbar_ui(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new("Signal Forge")
-                        .strong()
-                        .size(22.0)
-                        .color(theme::TEXT),
-                );
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                theme::brand(ui);
                 ui.add_space(12.0);
                 for (label, kind) in [
                     ("+ New Port", SetupKind::Port),
                     ("Virtual Pair", SetupKind::Pair),
                     ("Bridge", SetupKind::Bridge),
                 ] {
-                    if ui.button(label).clicked() {
+                    if theme::button(ui, label).clicked() {
                         self.open_setup(kind);
                     }
                 }
@@ -116,15 +112,13 @@ impl Workbench {
                 if ui.button("Workspace…").clicked() {
                     self.open_setup(SetupKind::Workspace);
                 }
-                if ui
-                    .button("2 Tiles")
+                if theme::button(ui, "2 Tiles")
                     .on_hover_text("Arrange open terminals in two columns")
                     .clicked()
                 {
                     self.arrange_tiles(false);
                 }
-                if ui
-                    .button("4 Tiles")
+                if theme::button(ui, "4 Tiles")
                     .on_hover_text("Arrange open terminals in a 2 × 2 grid")
                     .clicked()
                 {
@@ -251,15 +245,19 @@ impl Workbench {
                                 ConnectionState::Fault(_) => theme::ERROR,
                             };
                             theme::card_frame().show(ui, |ui| {
-                                if ui
-                                    .selectable_label(
-                                        self.selected.as_ref() == Some(id),
-                                        RichText::new(format!("{path}")).color(color),
-                                    )
-                                    .clicked()
-                                {
-                                    self.select_terminal(id.clone());
-                                }
+                                ui.set_min_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    theme::status_dot(ui, color);
+                                    if ui
+                                        .selectable_label(
+                                            self.selected.as_ref() == Some(id),
+                                            RichText::new(path).color(theme::TEXT),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.select_terminal(id.clone());
+                                    }
+                                });
                                 ui.label(RichText::new(summary).small().color(theme::MUTED));
                             });
                         }
@@ -350,7 +348,7 @@ impl Workbench {
         for preset in presets {
             if ui
                 .add_sized(
-                    [ui.available_width(), 24.0],
+                    [ui.available_width(), 32.0],
                     egui::Button::new(&preset.name),
                 )
                 .on_hover_text(format!("{}\n{}", preset.description, preset.shortcut))
@@ -443,7 +441,7 @@ impl Workbench {
                     ui.weak("Creates two linked raw PTYs. Existing paths are never overwritten.");
                     ui.horizontal(|ui| {
                         ui.selectable_value(&mut dialog.pair_emulated, false, "Unlimited");
-                        ui.selectable_value(&mut dialog.pair_emulated, true, "Emulated baud");
+                        theme::tab_value(ui, &mut dialog.pair_emulated, true, "Emulated baud", "Emulated baud");
                     });
                     if dialog.pair_emulated {
                         ui.label("Shared link timing · independent full-duplex directions");
