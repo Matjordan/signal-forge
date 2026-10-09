@@ -32,6 +32,19 @@ impl Default for TriggerUi {
     }
 }
 impl TriggerUi {
+    pub(super) fn finish(&mut self) {
+        if let Some(capture) = &mut self.capture {
+            capture.finish();
+        }
+    }
+    pub(super) fn set_path(&mut self, path: std::path::PathBuf) {
+        self.path = path.display().to_string();
+    }
+    pub(super) fn clear_session_path(&mut self, root: &std::path::Path) {
+        if std::path::Path::new(&self.path).starts_with(root) {
+            self.path.clear();
+        }
+    }
     pub(super) fn stop(&self) {
         if let Some(capture) = &self.capture {
             capture.stop();
@@ -135,6 +148,10 @@ impl TerminalViewer<'_> {
                     options,
                 ) {
                     Ok(worker) => {
+                        self.artifacts.push((
+                            worker.path.clone(),
+                            signal_forge::session::ArtifactKind::TriggeredCapture,
+                        ));
                         capture.capture = Some(worker);
                         tab.error = None;
                     }

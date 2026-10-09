@@ -31,3 +31,5 @@ pub mod traffic_analysis;
 
 pub mod replay;
 pub mod triggered_capture;
+
+pub mod session;

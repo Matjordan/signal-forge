@@ -130,6 +130,16 @@ impl Workbench {
                 if ui.button("Replay…").clicked() {
                     self.replay_setup = Some(Default::default());
                 }
+                if ui
+                    .button(if self.session.is_some() {
+                        "Session (active)"
+                    } else {
+                        "Session…"
+                    })
+                    .clicked()
+                {
+                    self.session_ui.open = true;
+                }
                 if ui.button("Refresh").clicked() {
                     self.refresh();
                 }
@@ -505,6 +515,10 @@ impl Workbench {
                 .save_to(std::path::Path::new(&dialog.workspace_path))
             {
                 Ok(()) => {
+                    self.pending_artifacts.push((
+                        std::path::PathBuf::from(&dialog.workspace_path),
+                        signal_forge::session::ArtifactKind::WorkspaceExport,
+                    ));
                     self.error = Some("Workspace exported.".into());
                     return;
                 }

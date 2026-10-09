@@ -31,13 +31,15 @@ jobs:
       - name: Graphical launch and real endpoint byte flow
         run: |
           python3 scripts/test-gui-smoke-support.py
-          xvfb-run -a -s "-screen 0 2560x1440x24 -noreset" sh -c 'python3 scripts/smoke.py && python3 scripts/workspace-smoke.py && python3 scripts/ui-smoke.py && python3 scripts/update-smoke.py'
+          xvfb-run -a -s "-screen 0 2560x1440x24 -noreset" sh -c 'python3 scripts/smoke.py && python3 scripts/workspace-smoke.py && python3 scripts/ui-smoke.py && python3 scripts/update-smoke.py && python3 scripts/session-smoke.py'
       - name: Upload graphical smoke screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: linux-workbench-screenshot
           path: |
+            /tmp/signal-forge-session.png
+            /tmp/signal-forge-session-failure.png
             /tmp/signal-forge-smoke.png
             /tmp/workspace-failure.png
             /tmp/signal-forge-four-tiles.png

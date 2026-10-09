@@ -11,6 +11,7 @@ pub(super) struct BridgeView {
     events: Receiver<Arc<TrafficEvent>>,
     inspector: Inspector,
     capture_path: String,
+    pub(super) pending_artifact: Option<std::path::PathBuf>,
     capture: Option<Capture>,
     capture_error: Option<String>,
 }
@@ -57,12 +58,27 @@ impl Workbench {
                 let events = bridge.subscribe(512);
                 self.bridges.push(BridgeView {
                     bridge,
+                    pending_artifact: None,
                     events,
                     inspector: Inspector::new(),
-                    capture_path: format!(
-                        "bridge-{}.jsonl",
-                        signal_forge::inspector::timestamp_ns(std::time::SystemTime::now())
-                    ),
+                    capture_path: self
+                        .session
+                        .as_ref()
+                        .map(|session| {
+                            session
+                                .suggested_path(
+                                    &format!("bridge-{}", self.bridges.len() + 1),
+                                    "jsonl",
+                                )
+                                .display()
+                                .to_string()
+                        })
+                        .unwrap_or_else(|| {
+                            format!(
+                                "bridge-{}.jsonl",
+                                signal_forge::inspector::timestamp_ns(std::time::SystemTime::now())
+                            )
+                        }),
                     capture: None,
                     capture_error: None,
                 });
@@ -428,7 +444,12 @@ impl Workbench {
 
 impl Drop for Workbench {
     fn drop(&mut self) {
+        self.finish_session_outputs();
         self.save_workspace();
+        self.snapshot_workspace();
+        if let Err(error) = self.save_session_context(true) {
+            log::error!("Session finalization: {error}");
+        }
         self.bridges.clear();
         for (_, tab) in self.dock.iter_all_tabs_mut() {
             tab.endpoint.disconnect();
@@ -438,6 +459,23 @@ impl Drop for Workbench {
 }
 
 impl BridgeView {
+    pub(super) fn set_capture_path(&mut self, path: std::path::PathBuf) {
+        self.capture_path = path.display().to_string();
+    }
+    pub(super) fn clear_session_path(&mut self, root: &Path) {
+        if Path::new(&self.capture_path).starts_with(root) {
+            self.capture_path = format!(
+                "bridge-{}.jsonl",
+                signal_forge::inspector::timestamp_ns(std::time::SystemTime::now())
+            );
+        }
+    }
+    pub(super) fn finish_capture(&mut self) {
+        if let Some(capture) = &mut self.capture {
+            capture.finish();
+        }
+    }
+
     fn toggle_capture(&mut self) {
         if let Some(capture) = &self.capture {
             if matches!(
@@ -451,6 +489,7 @@ impl BridgeView {
         match Capture::start(Path::new(&self.capture_path), &self.bridge) {
             Ok(capture) => {
                 log::info!("Capture started: {}", capture.path.display());
+                self.pending_artifact = Some(capture.path.clone());
                 self.capture = Some(capture);
                 self.capture_error = None;
             }
