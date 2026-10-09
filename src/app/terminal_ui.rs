@@ -481,11 +481,50 @@ impl TerminalViewer<'_> {
         }
     }
 
+    fn open_file_dialog(tab: &mut Terminal, recording: bool) {
+        let path = std::path::Path::new(if recording {
+            &tab.recording_path
+        } else {
+            &tab.file_path
+        });
+        let mut dialog = egui_file_dialog::FileDialog::new()
+            .id(egui::Id::new((
+                "terminal-file-dialog",
+                tab.endpoint.id().clone(),
+            )))
+            .title(if recording {
+                "Choose RX log destination"
+            } else {
+                "Choose file to send"
+            });
+        if path.is_dir() {
+            dialog = dialog.initial_directory(path.to_path_buf());
+        } else {
+            if let Some(parent) = path.parent().filter(|parent| parent.is_dir()) {
+                dialog = dialog.initial_directory(parent.to_path_buf());
+            }
+            if recording {
+                if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                    dialog = dialog.default_file_name(name);
+                }
+            }
+        }
+        if recording {
+            dialog.save_file();
+        } else {
+            dialog.pick_file();
+        }
+        tab.file_dialog = Some((dialog, recording));
+    }
+
     pub(super) fn files_panel(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         use signal_forge::file_transfer::{FileMode, TransferState};
         ui.label("Send file");
         ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut tab.file_path);
+            ui.add(egui::TextEdit::singleline(&mut tab.file_path).desired_width(160.0));
+            if ui.button("Browse…").clicked() {
+                Self::open_file_dialog(tab, false);
+            }
             if ui
                 .add_enabled(
                     tab.endpoint.state() == ConnectionState::Connected
@@ -573,7 +612,10 @@ impl TerminalViewer<'_> {
                 ui.selectable_value(&mut tab.recording_mode, FileMode::Hex, "Hex");
             });
         ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut tab.recording_path);
+            ui.add(egui::TextEdit::singleline(&mut tab.recording_path).desired_width(160.0));
+            if ui.button("Save as…").clicked() {
+                Self::open_file_dialog(tab, true);
+            }
             if ui
                 .add_enabled(
                     tab.endpoint.state() == ConnectionState::Connected

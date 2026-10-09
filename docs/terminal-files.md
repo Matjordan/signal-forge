@@ -5,7 +5,8 @@ running Signal Forge, including when the serial endpoint is remote over SSH.
 
 ## Send a file
 
-Enter the source path, select a mode, and click **Send file**:
+Click **Browse…** to select the source file (or enter its path), select a mode,
+and click **Send file**:
 
 - **Raw / Binary** sends the exact file bytes.
 - **ASCII / Text (UTF-8)** sends valid UTF-8 text unchanged, including CR/LF and
@@ -27,7 +28,12 @@ These are byte transfers, without a receiver-side transfer protocol.
 
 ## Record received bytes
 
-Enter a new output path, select a mode, and click **Record RX**:
+Click **Save as…** to choose a new output file (or enter its path), select a
+mode, and click **Record RX**. Selecting a path does not start sending or
+recording; cancelling either dialog leaves the path unchanged. Existing output
+files remain protected from overwriting.
+
+Recording modes:
 
 - **Raw / Binary** saves exact received bytes.
 - **ASCII / Text (escaped binary)** preserves printable ASCII, tabs, CR, and LF;

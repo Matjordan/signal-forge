@@ -57,6 +57,7 @@ struct Terminal {
     repeat_count: u64,
     continuous: bool,
     file_path: String,
+    file_dialog: Option<(egui_file_dialog::FileDialog, bool)>,
     file_mode: signal_forge::file_transfer::FileMode,
     file_handle: Option<signal_forge::file_transfer::FileTransferHandle>,
     file_chunk: usize,
@@ -96,6 +97,7 @@ impl Terminal {
             repeat_count: 10,
             continuous: false,
             file_path: String::new(),
+            file_dialog: None,
             file_mode: signal_forge::file_transfer::FileMode::Raw,
             file_handle: None,
             file_chunk: 4096,
@@ -448,6 +450,24 @@ impl eframe::App for Workbench {
             ) {
                 if let Some(recording) = &tab.recording {
                     recording.stop();
+                }
+            }
+        }
+        for (_, tab) in self.dock.iter_all_tabs_mut() {
+            if let Some((dialog, recording)) = &mut tab.file_dialog {
+                dialog.update(ctx);
+                if let Some(path) = dialog.take_picked() {
+                    match path.into_os_string().into_string() {
+                        Ok(path) => {
+                            if *recording {
+                                tab.recording_path = path;
+                            } else {
+                                tab.file_path = path;
+                            }
+                            tab.error = None;
+                        }
+                        Err(_) => tab.error = Some("The selected path is not valid UTF-8".into()),
+                    }
                 }
             }
         }
