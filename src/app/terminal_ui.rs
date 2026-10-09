@@ -85,6 +85,7 @@ impl TerminalViewer<'_> {
 
     pub(super) fn display_controls(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         let previous_mode = tab.receive_mode;
+        let old_analysis = tab.analysis.clone();
         ui.horizontal_wrapped(|ui| {
             ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Line, "Line");
             ui.selectable_value(&mut tab.receive_mode, ReceiveMode::RawChunks, "Raw Chunks");
@@ -111,14 +112,42 @@ impl TerminalViewer<'_> {
                     });
                 if previous != tab.lines.delimiter {
                     tab.rebuild_lines();
+                    tab.statistics.delimiter_changed();
                 }
                 let old = (tab.timestamps, tab.show_controls);
+                egui::ComboBox::from_id_salt(("traffic-visibility", tab.endpoint.id().clone()))
+                    .selected_text(match tab.analysis.visibility {
+                        signal_forge::traffic_analysis::Visibility::Both => "RX + TX",
+                        signal_forge::traffic_analysis::Visibility::Rx => "RX only",
+                        signal_forge::traffic_analysis::Visibility::Tx => "TX only",
+                    })
+                    .show_ui(ui, |ui| {
+                        use signal_forge::traffic_analysis::Visibility;
+                        ui.selectable_value(
+                            &mut tab.analysis.visibility,
+                            Visibility::Both,
+                            "RX + TX",
+                        );
+                        ui.selectable_value(
+                            &mut tab.analysis.visibility,
+                            Visibility::Rx,
+                            "RX only",
+                        );
+                        ui.selectable_value(
+                            &mut tab.analysis.visibility,
+                            Visibility::Tx,
+                            "TX only",
+                        );
+                    });
+                ui.checkbox(&mut tab.analysis.direction_labels, "Show RX/TX labels");
                 ui.checkbox(&mut tab.timestamps, "Timestamps");
                 ui.checkbox(&mut tab.show_controls, "Show Control Characters");
                 if old != (tab.timestamps, tab.show_controls) {
                     tab.selection.clear();
                 }
                 if ui.button("Copy All").clicked() {
+                    tab.view.dirty = true;
+                    tab.refresh_view();
                     let rows = Self::row_count(tab);
                     let text = (0..rows)
                         .map(|index| Self::traffic_layout(tab, index).text)
@@ -131,6 +160,7 @@ impl TerminalViewer<'_> {
                 ui.checkbox(&mut tab.paused, "Pause display");
                 if ui.button("Clear").clicked() {
                     tab.selection.clear();
+                    tab.view.dirty = true;
                     tab.history.clear();
                     tab.history_framing.clear();
                     tab.lines.clear();
@@ -138,6 +168,7 @@ impl TerminalViewer<'_> {
                     tab.rx_gap = false;
                 }
             });
+            Self::analysis_controls(ui, tab);
             if tab.paused {
                 ui.colored_label(theme::WARNING, "Paused");
             }
@@ -149,8 +180,9 @@ impl TerminalViewer<'_> {
                 );
             }
         });
-        if previous_mode != tab.receive_mode {
+        if previous_mode != tab.receive_mode || old_analysis != tab.analysis {
             tab.selection.clear();
+            tab.view.dirty = true;
         }
     }
 
@@ -196,6 +228,7 @@ impl TerminalViewer<'_> {
     }
 
     pub(super) fn traffic_canvas(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        tab.refresh_view();
         let extra = match tab.tool {
             TerminalTool::Send => 0.0,
             TerminalTool::Repeat => 64.0,
@@ -244,12 +277,21 @@ impl TerminalViewer<'_> {
                 .show_rows(
                     ui,
                     theme::TRAFFIC_ROW_HEIGHT,
-                    if tab.receive_mode == ReceiveMode::Line {
-                        tab.lines.len()
-                    } else {
-                        tab.history.len()
-                    },
+                    Self::row_count(tab),
                     |ui, range| {
+                        if let Some(row) = tab.view.scroll_to.take() {
+                            let rect = egui::Rect::from_min_size(
+                                egui::pos2(
+                                    ui.min_rect().left(),
+                                    ui.max_rect().top()
+                                        + (row as f32 - range.start as f32)
+                                            * (theme::TRAFFIC_ROW_HEIGHT
+                                                + ui.spacing().item_spacing.y),
+                                ),
+                                egui::vec2(1.0, theme::TRAFFIC_ROW_HEIGHT),
+                            );
+                            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                        }
                         if tab.selection.dragging {
                             if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
                                 let clip = ui.clip_rect();
@@ -274,7 +316,9 @@ impl TerminalViewer<'_> {
         });
     }
 
-    fn traffic_layout(tab: &Terminal, index: usize) -> egui::text::LayoutJob {
+    fn traffic_layout(tab: &Terminal, visible: usize) -> egui::text::LayoutJob {
+        let cached = tab.view.rows.get(visible).filter(|_| tab.view.ready);
+        let index = cached.map_or(visible, |row| row.source);
         let (timestamp, direction, bytes, incomplete, truncated) =
             if tab.receive_mode == ReceiveMode::Line {
                 let row = tab.lines.row(index).unwrap();
@@ -354,7 +398,9 @@ impl TerminalViewer<'_> {
             },
         );
         text.append(
-            if direction == Direction::Rx {
+            if !tab.analysis.direction_labels {
+                ""
+            } else if direction == Direction::Rx {
                 "RX"
             } else {
                 "TX"
@@ -376,7 +422,14 @@ impl TerminalViewer<'_> {
             },
         );
         text.append(
-            &format!("  {payload}{suffix}"),
+            &format!(
+                "{}{payload}{suffix}",
+                if tab.analysis.direction_labels || !chunk.is_empty() {
+                    "  "
+                } else {
+                    ""
+                }
+            ),
             0.0,
             egui::TextFormat {
                 font_id: font,
@@ -384,10 +437,56 @@ impl TerminalViewer<'_> {
                 ..Default::default()
             },
         );
+        if let Some(row) = cached {
+            use signal_forge::traffic_analysis::duration_text;
+            let mut annotations = Vec::new();
+            if tab.analysis.delta_displayed {
+                if let Some(delta) = row.timing.displayed {
+                    annotations.push(format!("Δ {}", duration_text(delta)));
+                }
+            }
+            if tab.analysis.delta_rx {
+                if let Some(delta) = row.timing.rx {
+                    annotations.push(format!("ΔRX {}", duration_text(delta)));
+                }
+            }
+            if tab.analysis.delta_tx {
+                if let Some(delta) = row.timing.tx {
+                    annotations.push(format!("ΔTX {}", duration_text(delta)));
+                }
+            }
+            if tab.analysis.line_span {
+                if let Some(span) = row.span {
+                    annotations.push(format!("RX span {}", duration_text(span)));
+                }
+            }
+            if tab.analysis.response_latency {
+                if let Some((duration, sequence)) = row.response {
+                    annotations.push(format!(
+                        "TX #{sequence} → RX {} (observed)",
+                        duration_text(duration)
+                    ));
+                }
+            }
+            if !annotations.is_empty() {
+                text.append(
+                    &format!("  [{}]", annotations.join(" · ")),
+                    0.0,
+                    egui::TextFormat {
+                        font_id: egui::FontId::monospace(12.0),
+                        color: theme::MUTED,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
         text
     }
 
     fn row_count(tab: &Terminal) -> usize {
+        if tab.view.ready {
+            return tab.view.rows.len();
+        }
         if tab.receive_mode == ReceiveMode::Line {
             tab.lines.len()
         } else {
@@ -410,6 +509,7 @@ impl TerminalViewer<'_> {
 
     fn selectable_traffic_row(ui: &mut egui::Ui, tab: &mut Terminal, index: usize) {
         use signal_forge::terminal_selection::Position;
+        let source = tab.view.rows.get(index).map_or(index, |row| row.source);
         let (pos, galley, response) = egui::Label::new(Self::traffic_layout(tab, index))
             .wrap_mode(egui::TextWrapMode::Extend)
             .sense(egui::Sense::click_and_drag())
@@ -446,6 +546,28 @@ impl TerminalViewer<'_> {
                 }
             }
         }
+        if let Some(row) = tab.view.rows.get(index) {
+            let color = if tab.view.current == Some(index) {
+                Some(egui::Color32::from_rgb(45, 85, 120))
+            } else if row.matched {
+                Some(egui::Color32::from_rgb(85, 70, 25))
+            } else {
+                row.emphasis.as_ref().map(|(emphasis, _)| match emphasis {
+                    signal_forge::traffic_analysis::Emphasis::Error => {
+                        egui::Color32::from_rgb(90, 30, 35)
+                    }
+                    signal_forge::traffic_analysis::Emphasis::Warning => {
+                        egui::Color32::from_rgb(75, 60, 25)
+                    }
+                    signal_forge::traffic_analysis::Emphasis::Ready => {
+                        egui::Color32::from_rgb(25, 70, 45)
+                    }
+                })
+            };
+            if let Some(color) = color {
+                ui.painter().rect_filled(response.rect, 0.0, color);
+            }
+        }
         if let Some(range) = tab.selection.columns(index, galley.text().chars().count()) {
             if !range.is_empty() {
                 let left = pos
@@ -466,8 +588,18 @@ impl TerminalViewer<'_> {
             }
         }
         ui.painter().galley(pos, galley, theme::RX);
+        if let Some((_, label)) = tab
+            .view
+            .rows
+            .get(index)
+            .and_then(|row| row.emphasis.as_ref())
+        {
+            response
+                .clone()
+                .on_hover_text(format!("Highlight: {label}"));
+        }
         if tab.receive_mode == ReceiveMode::Line {
-            if let Some(timing) = tab.lines.row(index).and_then(|row| row.timing.as_ref()) {
+            if let Some(timing) = tab.lines.row(source).and_then(|row| row.timing.as_ref()) {
                 response.on_hover_text(timing.tooltip());
             }
         }
@@ -1004,6 +1136,131 @@ mod timing_hover_tests {
             "Drag must scroll through more than one viewport: {} rows",
             text.lines().count()
         );
+    }
+
+    #[test]
+    fn filters_labels_and_timing_render_without_mutating_retained_history() {
+        use signal_forge::traffic_analysis::{ViewSettings, Visibility};
+        let mut tab = Terminal::restored(&signal_forge::workspace::SavedTerminal {
+            settings: SerialSettings {
+                path: "/dev/test".into(),
+                ..Default::default()
+            },
+            timestamps: false,
+            ..Default::default()
+        });
+        for (sequence, direction, bytes) in [
+            (1, Direction::Rx, b"START\n".as_slice()),
+            (2, Direction::Tx, b"STATUS?".as_slice()),
+            (3, Direction::Rx, b"READY\n".as_slice()),
+        ] {
+            tab.receive(Arc::new(TrafficEvent {
+                sequence,
+                timestamp: UNIX_EPOCH + Duration::from_millis(sequence * 10),
+                endpoint: tab.endpoint.id().clone(),
+                direction,
+                bytes: Arc::from(bytes),
+            }));
+        }
+        tab.analysis = ViewSettings {
+            visibility: Visibility::Rx,
+            direction_labels: false,
+            delta_displayed: true,
+            delta_tx: true,
+            response_latency: true,
+            ..Default::default()
+        };
+        tab.refresh_view();
+        assert_eq!(TerminalViewer::row_count(&tab), 2);
+        let row = TerminalViewer::traffic_layout(&tab, 1).text;
+        assert!(row.starts_with("READY  ["), "{row}");
+        assert!(
+            row.contains("Δ 20.00 ms") && row.contains("ΔTX 10.00 ms"),
+            "{row}"
+        );
+        assert!(row.contains("TX #2 → RX 10.00 ms (observed)"), "{row}");
+        tab.analysis.visibility = Visibility::Tx;
+        tab.refresh_view();
+        assert!(TerminalViewer::traffic_layout(&tab, 0)
+            .text
+            .starts_with("STATUS?"));
+        assert_eq!(tab.history.len(), 3);
+        let restored = Terminal::restored(&tab.saved());
+        assert_eq!(restored.analysis, tab.analysis);
+    }
+
+    #[test]
+    fn search_navigation_scrolls_to_an_offscreen_match() {
+        use signal_forge::traffic_analysis::{Pattern, PatternMode};
+        let mut tab = Terminal::restored(&signal_forge::workspace::SavedTerminal {
+            settings: SerialSettings {
+                path: "/dev/test".into(),
+                ..Default::default()
+            },
+            timestamps: false,
+            auto_scroll: false,
+            ..Default::default()
+        });
+        tab.receive(Arc::new(TrafficEvent {
+            sequence: 1,
+            timestamp: UNIX_EPOCH,
+            endpoint: tab.endpoint.id().clone(),
+            direction: Direction::Rx,
+            bytes: Arc::from(
+                (0..300)
+                    .map(|i| format!("row {i}\n"))
+                    .collect::<String>()
+                    .into_bytes(),
+            ),
+        }));
+        tab.analysis.search = Pattern {
+            mode: PatternMode::Regex,
+            value: "^row 299".into(),
+        };
+        let ctx = egui::Context::default();
+        let bus = TrafficBus::default();
+        let mut selected = None;
+        let mut known = Vec::new();
+        let mut request = None;
+        let mut library = false;
+        let mut render = |tab: &mut Terminal, time| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(500.0, 260.0),
+                    )),
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        TerminalViewer {
+                            bus: &bus,
+                            selected: &mut selected,
+                            known_ports: &mut known,
+                            presets: &[],
+                            preset_request: &mut request,
+                            preset_library_open: &mut library,
+                        }
+                        .traffic_canvas(ui, tab);
+                    });
+                },
+            )
+        };
+        let first = render(&mut tab, 0.0);
+        assert!(!rendered_text(&first.shapes).contains("row 299"));
+        tab.navigate_match(true);
+        let mut output = render(&mut tab, 0.1);
+        for frame in 2..30 {
+            output = render(&mut tab, frame as f64 * 0.1);
+        }
+        assert!(
+            rendered_text(&output.shapes).contains("row 299"),
+            "{}",
+            rendered_text(&output.shapes)
+        );
+        assert_eq!(tab.view.current, Some(299));
     }
 
     #[test]

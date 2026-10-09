@@ -13,6 +13,16 @@ fn terminal(path: &str) -> SavedTerminal {
         hex: true,
         timestamps: false,
         show_controls: true,
+        analysis: signal_forge::traffic_analysis::ViewSettings {
+            visibility: signal_forge::traffic_analysis::Visibility::Rx,
+            direction_labels: false,
+            delta_displayed: true,
+            search: signal_forge::traffic_analysis::Pattern {
+                mode: signal_forge::traffic_analysis::PatternMode::Hex,
+                value: "00 FF".into(),
+            },
+            ..Default::default()
+        },
         auto_scroll: false,
         encoding: Encoding::Hex,
         ending: LineEnding::CrLf,

@@ -28,13 +28,14 @@ impl Endpoint for RestoredEndpoint {
     fn disconnect(&mut self) {}
 }
 impl Terminal {
-    fn saved(&self) -> SavedTerminal {
+    pub(super) fn saved(&self) -> SavedTerminal {
         SavedTerminal {
             settings: self.settings.clone(),
             hex: self.receive_mode == ReceiveMode::Hex,
             receive_mode: Some(self.receive_mode),
             delimiter: self.lines.delimiter,
             timestamps: self.timestamps,
+            analysis: self.analysis.clone(),
             show_controls: self.show_controls,
             auto_scroll: self.auto_scroll,
             encoding: self.encoding,
@@ -55,6 +56,7 @@ impl Terminal {
         });
         tab.lines = LineDisplay::new(saved.delimiter);
         tab.timestamps = saved.timestamps;
+        tab.analysis = saved.analysis.clone();
         tab.show_controls = saved.show_controls;
         tab.auto_scroll = saved.auto_scroll;
         tab.encoding = saved.encoding;
