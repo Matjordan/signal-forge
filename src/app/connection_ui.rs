@@ -159,10 +159,13 @@ impl Workbench {
                         "Available to open in Signal Forge or an external app"
                     });
                     ui.horizontal_wrapped(|ui| {
-                        if ui
-                            .small_button(format!("Open {}", if side == 0 { "A" } else { "B" }))
-                            .clicked()
-                        {
+                        let response = ui.small_button(format!(
+                            "Open {}",
+                            if side == 0 { "A" } else { "B" }
+                        ));
+                        let center = response.rect.center() * ui.ctx().pixels_per_point();
+                        log::debug!("PTY open control {path}: {},{}", center.x, center.y);
+                        if response.clicked() {
                             open = Some(path.clone());
                         }
                         if ui.small_button("Copy path").clicked() {

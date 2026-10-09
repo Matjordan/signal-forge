@@ -40,7 +40,12 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-virtual-ui-') as directory
             match = re.search(r'Created PTY pair bench: (\S+) <-> (\S+)', log_path.read_text())
             paths = match.groups()
             assert 'Emulated · 19200 baud · 8N1' in log_path.read_text()
-            click(window, 30, 235)  # Open A; one recent physical entry above the pair
+            # Sidebar height varies with path lengths and wrapped device labels.
+            # Use the rendered control's pixel coordinates, not a fixed row.
+            control_pattern = re.compile(r'PTY open control ' + re.escape(paths[0]) + r': ([\d.]+),([\d.]+)')
+            wait(lambda: control_pattern.search(log_path.read_text()))
+            control = list(control_pattern.finditer(log_path.read_text()))[-1]
+            click(window, *(round(float(value)) for value in control.groups()))
             wait(lambda: 'Opened ' + paths[0] in log_path.read_text())
             key('ctrl+s')
             saved = json.loads(config.read_text())
