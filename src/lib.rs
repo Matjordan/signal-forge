@@ -24,3 +24,5 @@ pub mod terminal_display;
 pub mod updater;
 
 pub mod desktop;
+
+pub mod terminal_selection;

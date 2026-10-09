@@ -35,6 +35,7 @@ impl Terminal {
             receive_mode: Some(self.receive_mode),
             delimiter: self.lines.delimiter,
             timestamps: self.timestamps,
+            show_controls: self.show_controls,
             auto_scroll: self.auto_scroll,
             encoding: self.encoding,
             escapes: self.escapes,
@@ -54,6 +55,7 @@ impl Terminal {
         });
         tab.lines = LineDisplay::new(saved.delimiter);
         tab.timestamps = saved.timestamps;
+        tab.show_controls = saved.show_controls;
         tab.auto_scroll = saved.auto_scroll;
         tab.encoding = saved.encoding;
         tab.escapes = saved.escapes;

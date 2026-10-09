@@ -143,6 +143,8 @@ pub struct DisplayRow {
     pub direction: Direction,
     pub bytes: Vec<u8>,
     pub complete: bool,
+    /// Actual recognized delimiter, separate from the logical payload.
+    pub terminator: Vec<u8>,
     pub truncated: bool,
     pub timing: Option<RxTiming>,
 }
@@ -150,6 +152,7 @@ pub struct LineDisplay {
     pub delimiter: LineDelimiter,
     pub rows: VecDeque<DisplayRow>,
     pub pending: Option<DisplayRow>,
+    pub evicted_rows: usize,
     skip_lf: bool,
     previous_cr: bool,
 }
@@ -164,6 +167,7 @@ impl LineDisplay {
             delimiter,
             rows: VecDeque::new(),
             pending: None,
+            evicted_rows: 0,
             skip_lf: false,
             previous_cr: false,
         }
@@ -180,6 +184,7 @@ impl LineDisplay {
     fn push(&mut self, row: DisplayRow) {
         if self.rows.len() == ROW_LIMIT {
             self.rows.pop_front();
+            self.evicted_rows += 1;
         }
         self.rows.push_back(row);
     }
@@ -189,6 +194,7 @@ impl LineDisplay {
             direction: Direction::Rx,
             bytes: Vec::new(),
             complete: false,
+            terminator: Vec::new(),
             truncated: false,
             timing: Some(RxTiming::new(event, framing)),
         })
@@ -210,6 +216,7 @@ impl LineDisplay {
                 direction: Direction::Tx,
                 bytes: event.bytes.to_vec(),
                 complete: true,
+                terminator: Vec::new(),
                 truncated: false,
                 timing: None,
             });
@@ -228,6 +235,7 @@ impl LineDisplay {
                         .find(|row| row.direction == Direction::Rx)
                     {
                         row.timing.as_mut().unwrap().observe_byte(event, framing);
+                        row.terminator.push(b'\n');
                     }
                     continue;
                 }
@@ -251,6 +259,12 @@ impl LineDisplay {
                         }
                     }
                 }
+                self.pending.as_mut().unwrap().terminator = if self.delimiter == LineDelimiter::CrLf
+                {
+                    b"\r\n".to_vec()
+                } else {
+                    vec![byte]
+                };
                 self.finish();
                 self.previous_cr = false;
                 self.skip_lf = self.delimiter == LineDelimiter::Auto && byte == b'\r';
@@ -280,13 +294,21 @@ impl LineDisplay {
     }
 }
 /// Show valid Unicode, escape controls and invalid bytes without replacement characters.
-pub fn line_text(mut bytes: &[u8]) -> String {
-    fn append(output: &mut String, text: &str) {
+pub fn line_text(bytes: &[u8]) -> String {
+    render_text(bytes, false)
+}
+/// Explicit visible control notation, preserving valid Unicode and invalid bytes.
+pub fn control_text(bytes: &[u8]) -> String {
+    render_text(bytes, true)
+}
+fn render_text(mut bytes: &[u8], controls: bool) -> String {
+    fn append(output: &mut String, text: &str, controls: bool) {
         for ch in text.chars() {
             match ch {
                 '\r' => output.push_str("\\r"),
                 '\n' => output.push_str("\\n"),
                 '\t' => output.push_str("\\t"),
+                '\0' if controls => output.push_str("\\0"),
                 ch if ch.is_control() => {
                     for byte in ch.to_string().bytes() {
                         output.push_str(&format!("\\x{byte:02X}"));
@@ -300,12 +322,16 @@ pub fn line_text(mut bytes: &[u8]) -> String {
     while !bytes.is_empty() {
         match std::str::from_utf8(bytes) {
             Ok(text) => {
-                append(&mut output, text);
+                append(&mut output, text, controls);
                 break;
             }
             Err(error) => {
                 let valid = error.valid_up_to();
-                append(&mut output, std::str::from_utf8(&bytes[..valid]).unwrap());
+                append(
+                    &mut output,
+                    std::str::from_utf8(&bytes[..valid]).unwrap(),
+                    controls,
+                );
                 let count = error.error_len().unwrap_or(bytes.len() - valid);
                 for byte in &bytes[valid..valid + count] {
                     output.push_str(&format!("\\x{byte:02X}"));

@@ -44,6 +44,8 @@ struct Terminal {
     paused: bool,
     auto_scroll: bool,
     timestamps: bool,
+    show_controls: bool,
+    selection: signal_forge::terminal_selection::Selection,
     receive_mode: ReceiveMode,
     lines: LineDisplay,
     input: String,
@@ -84,6 +86,8 @@ impl Terminal {
             paused: false,
             auto_scroll: true,
             timestamps: true,
+            show_controls: false,
+            selection: Default::default(),
             receive_mode: ReceiveMode::Line,
             lines: LineDisplay::default(),
             input: String::new(),
@@ -116,18 +120,37 @@ impl Terminal {
         }
         if self.paused {
             if event.direction == Direction::Rx {
+                if self.lines.pending.is_some() {
+                    self.selection.clear();
+                }
                 self.lines.discard_pending();
                 self.rx_gap = true;
             }
             return;
         }
         if event.direction == Direction::Rx && self.rx_gap {
+            if self.lines.pending.is_some() {
+                self.selection.clear();
+            }
             self.lines.discard_pending();
             self.rx_breaks.insert(event.sequence);
             self.rx_gap = false;
         }
+        let pending_insert = (event.direction == Direction::Tx && self.lines.pending.is_some())
+            .then_some(self.lines.rows.len());
+        let evicted = self.lines.evicted_rows;
         self.lines.receive_with_framing(&event, self.active_framing);
+        if self.receive_mode == ReceiveMode::Line {
+            let dropped = self.lines.evicted_rows - evicted;
+            self.selection.evict(dropped);
+            if let Some(index) = pending_insert {
+                self.selection.insert_row(index.saturating_sub(dropped));
+            }
+        }
         if self.history.len() == HISTORY_LIMIT {
+            if self.receive_mode != ReceiveMode::Line {
+                self.selection.evict(1);
+            }
             self.history_framing.pop_front();
             if let Some(old) = self.history.pop_front() {
                 self.rx_breaks.remove(&old.sequence);
@@ -137,6 +160,7 @@ impl Terminal {
         self.history.push_back(event);
     }
     fn rebuild_lines(&mut self) {
+        self.selection.clear();
         self.lines.clear();
         for (event, framing) in self.history.iter().zip(&self.history_framing) {
             if self.rx_breaks.contains(&event.sequence) {
