@@ -43,6 +43,7 @@ struct Terminal {
     history: VecDeque<Arc<TrafficEvent>>,
     history_framing: VecDeque<SerialFraming>,
     active_framing: SerialFraming,
+    link_framing: Option<SerialFraming>,
     rx_gap: bool,
     rx_breaks: std::collections::HashSet<u64>,
     paused: bool,
@@ -86,6 +87,7 @@ impl Terminal {
             show_settings: false,
             tool: terminal_ui::TerminalTool::Send,
             active_framing: SerialFraming::from(&settings),
+            link_framing: None,
             settings,
             history: VecDeque::new(),
             history_framing: VecDeque::new(),
@@ -314,6 +316,9 @@ pub struct Workbench {
     active_bridge: usize,
     pairs: Vec<signal_forge::virtual_pair::VirtualPair>,
     pair_name: String,
+    pair_emulated: bool,
+    pair_framing: SerialSettings,
+    pair_diagnostics: Vec<signal_forge::virtual_pair::PathDiagnostic>,
     pair_directory: String,
     bridges: Vec<connection_ui::BridgeView>,
     bridge_a: Option<EndpointId>,
@@ -372,6 +377,9 @@ impl Workbench {
             active_bridge: 0,
             pairs: Vec::new(),
             pair_name: "bench".into(),
+            pair_emulated: false,
+            pair_framing: SerialSettings::default(),
+            pair_diagnostics: Vec::new(),
             pair_directory: String::new(),
             bridges: Vec::new(),
             bridge_a: None,
@@ -491,6 +499,27 @@ impl eframe::App for Workbench {
             }
         }
 
+        for (_, tab) in self.dock.iter_all_tabs_mut() {
+            let framing = self
+                .pairs
+                .iter()
+                .find(|pair| {
+                    pair.paths
+                        .iter()
+                        .chain(&pair.raw_paths)
+                        .any(|path| path == &tab.settings.path)
+                })
+                .and_then(|pair| match pair.timing {
+                    signal_forge::virtual_pair::LinkTiming::Emulated(framing) => Some(framing),
+                    _ => None,
+                });
+            if let Some(framing) = framing {
+                tab.active_framing = framing;
+            } else if tab.link_framing.is_some() {
+                tab.active_framing = SerialFraming::from(&tab.settings);
+            }
+            tab.link_framing = framing;
+        }
         for _ in 0..2048 {
             let Ok(event) = self.traffic.try_recv() else {
                 break;

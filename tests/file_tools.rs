@@ -179,6 +179,16 @@ fn cancellation_throttling_rx_and_disconnect_have_exact_progress() {
         accepted += n as u64;
     }
     assert_eq!(status.sent, accepted);
+    // Progress is finalized before the worker releases its transport slot.
+    // Wait for the public readiness flag before requesting another send.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while endpoint.file_send_active() {
+        assert!(
+            Instant::now() < deadline,
+            "Cancelled file worker did not release transport"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
     endpoint.send(vec![42]).unwrap();
     assert_eq!(received(&mut master, 1), [42]);
     let handle = endpoint

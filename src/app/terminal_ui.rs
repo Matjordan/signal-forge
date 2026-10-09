@@ -198,6 +198,7 @@ impl TerminalViewer<'_> {
             };
             ui.colored_label(color, state).on_hover_text(format!("{:?}", tab.endpoint.state()));
             ui.label(RichText::new(if tab.endpoint.read_only() { "Read-only replay source".into() } else { workbench_ui::framing(&tab.settings) }).small().color(theme::MUTED));
+            if let Some(framing)=tab.link_framing { ui.small(format!("Emulated link · {}",framing.label())); }
             if !tab.endpoint.read_only() && ui.selectable_label(tab.show_settings, "Settings").clicked() { tab.show_settings = !tab.show_settings; }
                 if ui
                     .add(

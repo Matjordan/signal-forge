@@ -17,7 +17,7 @@ jobs:
       - name: Set version for this build
         run: python3 scripts/release-version.py --apply
       - name: Install Linux native dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick xdotool x11-utils desktop-file-utils openssh-client openssh-server
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick xdotool x11-utils desktop-file-utils openssh-client openssh-server socat picocom minicom screen
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check Rust formatting
@@ -26,18 +26,22 @@ jobs:
         run: cargo build --locked --all-targets
       - name: Unit and PTY integration tests
         run: cargo test --locked --all-targets
+      - name: Unprivileged virtual-pair compatibility against socat
+        run: python3 scripts/test-virtual-compat.py
       - name: Real SSH serial integration tests
         run: python3 scripts/test-remote-serial.py
       - name: Graphical launch and real endpoint byte flow
         run: |
           python3 scripts/test-gui-smoke-support.py
-          xvfb-run -a -s "-screen 0 2560x1440x24 -noreset" sh -c 'python3 scripts/smoke.py && python3 scripts/workspace-smoke.py && python3 scripts/ui-smoke.py && python3 scripts/update-smoke.py && python3 scripts/session-smoke.py'
+          xvfb-run -a -s "-screen 0 2560x1440x24 -noreset" sh -c 'python3 scripts/smoke.py && python3 scripts/workspace-smoke.py && python3 scripts/ui-smoke.py && python3 scripts/update-smoke.py && python3 scripts/session-smoke.py && python3 scripts/virtual-pair-smoke.py'
       - name: Upload graphical smoke screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: linux-workbench-screenshot
           path: |
+            /tmp/signal-forge-virtual-timing.png
+            /tmp/signal-forge-virtual-failure.png
             /tmp/signal-forge-session.png
             /tmp/signal-forge-session-failure.png
             /tmp/signal-forge-smoke.png
