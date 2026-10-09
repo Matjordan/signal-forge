@@ -938,6 +938,10 @@ impl TerminalViewer<'_> {
                     tab.recording_mode,
                 ) {
                     Ok(recording) => {
+                        self.artifacts.push((
+                            std::path::PathBuf::from(&tab.recording_path),
+                            signal_forge::session::ArtifactKind::RxRecording,
+                        ));
                         tab.recording = Some(recording);
                         tab.error = None;
                     }
@@ -1032,6 +1036,7 @@ mod timing_hover_tests {
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
                         TerminalViewer {
+                            artifacts: &mut Vec::new(),
                             bus: &bus,
                             selected: &mut selected,
                             known_ports: &mut known,
@@ -1246,6 +1251,7 @@ mod timing_hover_tests {
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
                         TerminalViewer {
+                            artifacts: &mut Vec::new(),
                             bus: &bus,
                             selected: &mut selected,
                             known_ports: &mut known,

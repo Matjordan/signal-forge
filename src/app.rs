@@ -1,6 +1,7 @@
 mod analysis_ui;
 mod baud_ui;
 mod replay_ui;
+mod session_ui;
 mod trigger_ui;
 use baud_ui::BaudControl;
 
@@ -246,6 +247,7 @@ impl Terminal {
 
 struct TerminalViewer<'a> {
     bus: &'a TrafficBus,
+    artifacts: &'a mut Vec<(std::path::PathBuf, signal_forge::session::ArtifactKind)>,
     selected: &'a mut Option<EndpointId>,
     known_ports: &'a mut Vec<SerialSettings>,
     presets: &'a [Preset],
@@ -302,6 +304,9 @@ impl TabViewer for TerminalViewer<'_> {
 }
 
 pub struct Workbench {
+    session: Option<signal_forge::session::Session>,
+    session_ui: session_ui::SessionUi,
+    pending_artifacts: Vec<(std::path::PathBuf, signal_forge::session::ArtifactKind)>,
     updater: update_ui::UpdateController,
     setup: Option<workbench_ui::SetupDialog>,
     replay_setup: Option<replay_ui::ReplaySetup>,
@@ -357,6 +362,9 @@ impl Workbench {
         let bus = TrafficBus::default();
         let traffic = bus.subscribe(4096);
         let mut app = Self {
+            session: None,
+            session_ui: Default::default(),
+            pending_artifacts: Vec::new(),
             updater: update_ui::UpdateController::new(update_enabled, restart, update_failure),
             setup: None,
             replay_setup: None,
@@ -448,7 +456,16 @@ impl Workbench {
                 self.config.ports.retain(|s| s.path != self.settings.path);
                 self.config.ports.push(self.settings.clone());
                 self.selected = Some(endpoint.id().clone());
-                let tab = Terminal::new(endpoint, self.settings.clone());
+                let mut tab = Terminal::new(endpoint, self.settings.clone());
+                if let Some(session) = &self.session {
+                    let index = self.dock.iter_all_tabs().count() + 1;
+                    tab.recording_path = session
+                        .suggested_path(&format!("rx-{index}"), "bin")
+                        .display()
+                        .to_string();
+                    tab.trigger
+                        .set_path(session.suggested_path(&format!("trigger-{index}"), "jsonl"));
+                }
                 if self.dock.iter_all_tabs().count() == 1 {
                     self.dock
                         .main_surface_mut()
@@ -464,6 +481,16 @@ impl Workbench {
 }
 impl eframe::App for Workbench {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|input| input.viewport().close_requested()) && self.session.is_some() {
+            self.finish_session_outputs();
+            self.snapshot_workspace();
+            if let Err(error) = self.save_session_context(true) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.session_ui.open = true;
+                self.session_ui.error = Some(format!("Session could not be finalized: {error}"));
+            }
+        }
+
         for _ in 0..2048 {
             let Ok(event) = self.traffic.try_recv() else {
                 break;
@@ -507,6 +534,7 @@ impl eframe::App for Workbench {
         ctx.request_repaint_after(Duration::from_millis(33));
         self.toolbar_ui(ctx);
         self.replay_setup_ui(ctx);
+        self.session_panel(ctx);
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let connected = self
@@ -565,6 +593,7 @@ impl eframe::App for Workbench {
                         ui,
                         &mut TerminalViewer {
                             bus: &self.bus,
+                            artifacts: &mut self.pending_artifacts,
                             selected: &mut self.selected,
                             known_ports: &mut self.config.ports,
                             presets: &presets,
@@ -581,5 +610,6 @@ impl eframe::App for Workbench {
         self.preset_library_ui(ctx);
         self.setup_dialog_ui(ctx);
         self.update_prompt(ctx);
+        self.collect_session_artifacts();
     }
 }

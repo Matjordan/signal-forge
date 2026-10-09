@@ -165,10 +165,7 @@ impl Workbench {
             .as_ref()
             .map(|path| EndpointId(format!("serial:{path}")));
     }
-    pub(super) fn save_workspace(&mut self) {
-        if !self.config_recoverable {
-            return;
-        }
+    pub(super) fn snapshot_workspace(&mut self) {
         for (_, tab) in self.dock.iter_all_tabs() {
             self.config
                 .ports
@@ -220,6 +217,16 @@ impl Workbench {
                 .find(|(_, tab)| tab.endpoint.id() == id)
                 .map(|(_, tab)| tab.settings.path.clone())
         });
+    }
+    pub(super) fn save_workspace(&mut self) {
+        if !self.config_recoverable {
+            return;
+        }
+        self.snapshot_workspace();
+        if let Err(error) = self.save_session_context(false) {
+            self.error = Some(error);
+            return;
+        }
         match self.config.save() {
             Ok(()) => {
                 self.error = None;
