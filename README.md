@@ -221,3 +221,7 @@ from selection; clear, view-mode, delimiter, or representation changes reset it.
 actual recognized terminator, including CRLF split across reads. The option is
 saved per terminal in the workspace and changes only presentation and copied
 text; recordings, captures, bridges, and transport bytes remain unchanged.
+
+## Triggered capture and replay
+
+**Triggered capture** retains bounded pre-trigger RX/TX traffic and records around manual, text/hex/regex, or RX-after-idle triggers. **Replay…** opens Raw, Hex, or JSONL recordings as paused, read-only endpoints with play/pause/reset/step, original timing, and maximum-speed controls. Replay uses the normal terminal views and analysis tools and can feed a live endpoint through a one-way bridge. See [capture and replay](docs/capture-replay.md) for window limits, formats, pacing, and cancellation semantics.

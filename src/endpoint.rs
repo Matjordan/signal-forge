@@ -27,7 +27,12 @@ pub fn open(
     settings: &crate::config::SerialSettings,
     bus: crate::traffic::TrafficBus,
 ) -> Result<Box<dyn Endpoint>, EndpointError> {
-    if settings.path.starts_with("ssh://") {
+    if settings.path.starts_with("replay://") {
+        Ok(Box::new(crate::replay::ReplayEndpoint::open(
+            crate::replay::ReplayConfig::parse(&settings.path).map_err(EndpointError::Io)?,
+            bus,
+        )?))
+    } else if settings.path.starts_with("ssh://") {
         Ok(Box::new(crate::ssh_serial::SshSerialEndpoint::open(
             settings, bus,
         )?))
@@ -42,6 +47,12 @@ pub fn open(
 /// observed through TrafficBus; physical handles stay in transport workers.
 /// Bridges attach to the transport RX path and never subscribe to the monitor bus.
 pub trait Endpoint: Send {
+    fn read_only(&self) -> bool {
+        false
+    }
+    fn playback(&self) -> Option<crate::replay::ReplayController> {
+        None
+    }
     fn id(&self) -> &EndpointId;
     fn display_name(&self) -> &str;
     fn state(&self) -> ConnectionState;
@@ -70,6 +81,12 @@ pub trait Endpoint: Send {
 }
 
 impl<T: Endpoint + ?Sized> Endpoint for Box<T> {
+    fn read_only(&self) -> bool {
+        (**self).read_only()
+    }
+    fn playback(&self) -> Option<crate::replay::ReplayController> {
+        (**self).playback()
+    }
     fn send_file_mode(
         &self,
         path: &std::path::Path,

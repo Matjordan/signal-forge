@@ -1,5 +1,7 @@
 mod analysis_ui;
 mod baud_ui;
+mod replay_ui;
+mod trigger_ui;
 use baud_ui::BaudControl;
 
 mod connection_ui;
@@ -62,6 +64,7 @@ struct Terminal {
     repeat_interval_ms: u64,
     repeat_count: u64,
     continuous: bool,
+    trigger: trigger_ui::TriggerUi,
     file_path: String,
     file_dialog: Option<(egui_file_dialog::FileDialog, bool)>,
     file_mode: signal_forge::file_transfer::FileMode,
@@ -107,6 +110,7 @@ impl Terminal {
             repeat_interval_ms: 1000,
             repeat_count: 10,
             continuous: false,
+            trigger: Default::default(),
             file_path: String::new(),
             file_dialog: None,
             file_mode: signal_forge::file_transfer::FileMode::Raw,
@@ -282,6 +286,7 @@ impl TabViewer for TerminalViewer<'_> {
                     terminal_ui::TerminalTool::Repeat => self.repeat_panel(ui, tab),
                     terminal_ui::TerminalTool::Presets => self.preset_panel(ui, tab),
                     terminal_ui::TerminalTool::Files => self.files_panel(ui, tab),
+                    terminal_ui::TerminalTool::Capture => self.trigger_panel(ui, tab),
                 }
                 self.status_footer(ui, tab);
             });
@@ -299,6 +304,7 @@ impl TabViewer for TerminalViewer<'_> {
 pub struct Workbench {
     updater: update_ui::UpdateController,
     setup: Option<workbench_ui::SetupDialog>,
+    replay_setup: Option<replay_ui::ReplaySetup>,
     preset_library_open: bool,
     active_bridge: usize,
     pairs: Vec<signal_forge::virtual_pair::VirtualPair>,
@@ -353,6 +359,7 @@ impl Workbench {
         let mut app = Self {
             updater: update_ui::UpdateController::new(update_enabled, restart, update_failure),
             setup: None,
+            replay_setup: None,
             preset_library_open: false,
             active_bridge: 0,
             pairs: Vec::new(),
@@ -472,12 +479,14 @@ impl eframe::App for Workbench {
                 tab.endpoint.state(),
                 ConnectionState::Connected | ConnectionState::Connecting
             ) {
+                tab.trigger.stop();
                 if let Some(recording) = &tab.recording {
                     recording.stop();
                 }
             }
         }
         for (_, tab) in self.dock.iter_all_tabs_mut() {
+            tab.trigger.picker(ctx);
             if let Some((dialog, recording)) = &mut tab.file_dialog {
                 dialog.update(ctx);
                 if let Some(path) = dialog.take_picked() {
@@ -497,6 +506,7 @@ impl eframe::App for Workbench {
         }
         ctx.request_repaint_after(Duration::from_millis(33));
         self.toolbar_ui(ctx);
+        self.replay_setup_ui(ctx);
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let connected = self

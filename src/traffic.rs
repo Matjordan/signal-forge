@@ -22,7 +22,7 @@ pub struct TrafficEvent {
 }
 
 struct Subscriber {
-    filter: Option<(EndpointId, Direction)>,
+    filter: Option<(EndpointId, Option<Direction>)>,
     sender: SyncSender<Arc<TrafficEvent>>,
     dropped: Arc<AtomicU64>,
     id: u64,
@@ -52,12 +52,15 @@ impl TrafficBus {
         capacity: usize,
         endpoint: EndpointId,
     ) -> TrafficSubscription {
-        self.subscribe_filtered(capacity, Some((endpoint, Direction::Rx)))
+        self.subscribe_filtered(capacity, Some((endpoint, Some(Direction::Rx))))
+    }
+    pub fn subscribe_endpoint(&self, capacity: usize, endpoint: EndpointId) -> TrafficSubscription {
+        self.subscribe_filtered(capacity, Some((endpoint, None)))
     }
     fn subscribe_filtered(
         &self,
         capacity: usize,
-        filter: Option<(EndpointId, Direction)>,
+        filter: Option<(EndpointId, Option<Direction>)>,
     ) -> TrafficSubscription {
         let (sender, receiver) = mpsc::sync_channel(capacity.max(1));
         let dropped = Arc::new(AtomicU64::new(0));
@@ -80,13 +83,32 @@ impl TrafficBus {
     }
 
     pub fn publish(&self, endpoint: EndpointId, direction: Direction, bytes: &[u8]) {
+        self.publish_inner(endpoint, direction, bytes, None);
+    }
+    /// Replay preserves original recorded timestamps without changing payloads.
+    pub fn publish_at(
+        &self,
+        endpoint: EndpointId,
+        direction: Direction,
+        bytes: &[u8],
+        timestamp: SystemTime,
+    ) {
+        self.publish_inner(endpoint, direction, bytes, Some(timestamp));
+    }
+    fn publish_inner(
+        &self,
+        endpoint: EndpointId,
+        direction: Direction,
+        bytes: &[u8],
+        timestamp: Option<SystemTime>,
+    ) {
         // Serialize sequence allocation and fan-out so every subscriber observes
         // the same ordering, even with independent serial worker threads.
         let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
         inner.sequence += 1;
         let event = Arc::new(TrafficEvent {
             sequence: inner.sequence,
-            timestamp: SystemTime::now(),
+            timestamp: timestamp.unwrap_or_else(SystemTime::now),
             endpoint,
             direction,
             bytes: Arc::from(bytes),
@@ -96,7 +118,8 @@ impl TrafficBus {
                 .filter
                 .as_ref()
                 .is_some_and(|(endpoint, direction)| {
-                    event.endpoint != *endpoint || event.direction != *direction
+                    event.endpoint != *endpoint
+                        || direction.is_some_and(|direction| event.direction != direction)
                 })
             {
                 return true;

@@ -5,13 +5,17 @@ use signal_forge::workspace::{Layout, SavedTerminal, SavedWindow};
 struct RestoredEndpoint {
     id: EndpointId,
     path: String,
+    name: String,
 }
 impl Endpoint for RestoredEndpoint {
+    fn read_only(&self) -> bool {
+        self.path.starts_with("replay://")
+    }
     fn id(&self) -> &EndpointId {
         &self.id
     }
     fn display_name(&self) -> &str {
-        &self.path
+        &self.name
     }
     fn state(&self) -> ConnectionState {
         ConnectionState::Disconnected
@@ -47,6 +51,13 @@ impl Terminal {
         let endpoint = RestoredEndpoint {
             id: EndpointId(format!("serial:{}", saved.settings.path)),
             path: saved.settings.path.clone(),
+            name: if let Ok(config) =
+                signal_forge::replay::ReplayConfig::parse(&saved.settings.path)
+            {
+                format!("Replay: {}", config.path)
+            } else {
+                saved.settings.path.clone()
+            },
         };
         let mut tab = Self::new(endpoint, saved.settings.clone());
         tab.receive_mode = saved.receive_mode.unwrap_or(if saved.hex {

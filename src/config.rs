@@ -201,6 +201,9 @@ impl WorkspaceConfig {
 
 impl SerialSettings {
     pub fn validate(&self) -> Result<(), String> {
+        if self.path.starts_with("replay://") {
+            crate::replay::ReplayConfig::parse(&self.path)?;
+        }
         if self.path.starts_with("ssh://") {
             crate::ssh_serial::SshHost::parse(&self.path).map_err(|e| e.to_string())?;
         }

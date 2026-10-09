@@ -7,6 +7,7 @@ pub(super) enum TerminalTool {
     Repeat,
     Presets,
     Files,
+    Capture,
 }
 
 impl TerminalViewer<'_> {
@@ -196,8 +197,8 @@ impl TerminalViewer<'_> {
                 ConnectionState::Fault(_) => ("Fault", theme::ERROR),
             };
             ui.colored_label(color, state).on_hover_text(format!("{:?}", tab.endpoint.state()));
-            ui.label(RichText::new(workbench_ui::framing(&tab.settings)).small().color(theme::MUTED));
-            if ui.selectable_label(tab.show_settings, "Settings").clicked() { tab.show_settings = !tab.show_settings; }
+            ui.label(RichText::new(if tab.endpoint.read_only() { "Read-only replay source".into() } else { workbench_ui::framing(&tab.settings) }).small().color(theme::MUTED));
+            if !tab.endpoint.read_only() && ui.selectable_label(tab.show_settings, "Settings").clicked() { tab.show_settings = !tab.show_settings; }
                 if ui
                     .add(
                         theme::primary_button(if connected { "Disconnect" } else { "Reconnect" }),
@@ -234,6 +235,7 @@ impl TerminalViewer<'_> {
             TerminalTool::Repeat => 64.0,
             TerminalTool::Presets => 80.0,
             TerminalTool::Files => 240.0,
+            TerminalTool::Capture => 240.0,
         };
         let terminal_height = (ui.available_height() - theme::SEND_AREA_HEIGHT - extra).max(40.0);
         if !ui.input(|input| input.pointer.primary_down()) {
@@ -616,6 +618,7 @@ impl TerminalViewer<'_> {
             );
             ui.selectable_value(&mut tab.tool, TerminalTool::Presets, "Presets");
             ui.selectable_value(&mut tab.tool, TerminalTool::Files, "Files / RX");
+            ui.selectable_value(&mut tab.tool, TerminalTool::Capture, "Triggered capture");
             if active && ui.add(theme::danger_button("Stop")).clicked() {
                 tab.stop_repeat();
             }
@@ -648,6 +651,10 @@ impl TerminalViewer<'_> {
     }
 
     pub(super) fn send_panel(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        if tab.endpoint.read_only() {
+            Self::playback_panel(ui, tab);
+            return;
+        }
         ui.horizontal(|ui| {
             // A global endpoint-based ID stays stable as virtualized traffic rows
             // are added above this editor or its terminal is moved in the dock.
@@ -738,7 +745,9 @@ impl TerminalViewer<'_> {
             }
             if ui
                 .add_enabled(
-                    !active && tab.endpoint.state() == ConnectionState::Connected,
+                    !active
+                        && tab.endpoint.state() == ConnectionState::Connected
+                        && !tab.endpoint.read_only(),
                     egui::Button::new("Start repeat"),
                 )
                 .clicked()
@@ -819,6 +828,7 @@ impl TerminalViewer<'_> {
             if ui
                 .add_enabled(
                     tab.endpoint.state() == ConnectionState::Connected
+                        && !tab.endpoint.read_only()
                         && !tab.endpoint.file_send_active(),
                     egui::Button::new("Send file"),
                 )
