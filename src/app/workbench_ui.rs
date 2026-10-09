@@ -127,6 +127,9 @@ impl Workbench {
                 if ui.button("Presets…").clicked() {
                     self.preset_library_open = true;
                 }
+                if ui.button("Replay…").clicked() {
+                    self.replay_setup = Some(Default::default());
+                }
                 if ui.button("Refresh").clicked() {
                     self.refresh();
                 }
@@ -214,9 +217,13 @@ impl Workbench {
                             .map(|(_, tab)| {
                                 (
                                     tab.endpoint.id().clone(),
-                                    tab.settings.path.clone(),
+                                    tab.endpoint.display_name().to_string(),
                                     tab.endpoint.state(),
-                                    framing(&tab.settings),
+                                    if tab.endpoint.read_only() {
+                                        "Read-only replay source".into()
+                                    } else {
+                                        framing(&tab.settings)
+                                    },
                                 )
                             })
                             .collect();
@@ -420,7 +427,7 @@ impl Workbench {
                     ui.weak("Creates two linked raw PTYs. Existing paths are never overwritten.");
                 }
                 SetupKind::Bridge => {
-                    let endpoints: Vec<_> = self.dock.iter_all_tabs().filter(|(_, t)| t.endpoint.state() == ConnectionState::Connected).map(|(_, t)| (t.endpoint.id().clone(), t.settings.path.clone())).collect();
+                    let endpoints: Vec<_> = self.dock.iter_all_tabs().filter(|(_, t)| t.endpoint.state() == ConnectionState::Connected).map(|(_, t)| (t.endpoint.id().clone(), t.endpoint.display_name().to_owned())).collect();
                     for (label, selection) in [("A", &mut dialog.a), ("B", &mut dialog.b)] {
                         ui.label(format!("Endpoint {label}"));
                         egui::ComboBox::from_id_salt(label).width(300.0).selected_text(selection.as_ref().map(|id| id.0.trim_start_matches("serial:")).unwrap_or("Select connected terminal")).show_ui(ui, |ui| {

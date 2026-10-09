@@ -10,6 +10,9 @@ use std::sync::{
 };
 
 pub trait BridgeWriter: Send + Sync {
+    fn writable(&self) -> bool {
+        true
+    }
     fn state(&self) -> ConnectionState;
     /// Must serialize with other writes to this endpoint and inspect cancellation
     /// between partial writes. True means the complete payload was accepted.
@@ -42,7 +45,7 @@ impl Route {
         }
     }
     fn forward(&self, bytes: &[u8]) {
-        if self.shared.stopped.load(Ordering::Acquire) {
+        if !self.destination.writable() || self.shared.stopped.load(Ordering::Acquire) {
             return;
         }
         if self.destination.state() != ConnectionState::Connected {
@@ -109,6 +112,11 @@ pub struct Bridge {
 impl Bridge {
     pub fn start(a: BridgePort, b: BridgePort) -> Result<Self, EndpointError> {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        if !a.writer.writable() && !b.writer.writable() {
+            return Err(EndpointError::Io(
+                "A bridge needs a writable output endpoint".into(),
+            ));
+        }
         if a.id == b.id || Arc::ptr_eq(&a.route, &b.route) {
             return Err(EndpointError::Io("Select two different endpoints".into()));
         }

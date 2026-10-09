@@ -28,3 +28,6 @@ pub mod desktop;
 pub mod terminal_selection;
 
 pub mod traffic_analysis;
+
+pub mod replay;
+pub mod triggered_capture;
