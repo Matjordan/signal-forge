@@ -1,3 +1,4 @@
+mod analysis_ui;
 mod baud_ui;
 use baud_ui::BaudControl;
 
@@ -44,6 +45,9 @@ struct Terminal {
     paused: bool,
     auto_scroll: bool,
     timestamps: bool,
+    analysis: signal_forge::traffic_analysis::ViewSettings,
+    statistics: signal_forge::traffic_analysis::Statistics,
+    view: analysis_ui::ViewCache,
     show_controls: bool,
     selection: signal_forge::terminal_selection::Selection,
     receive_mode: ReceiveMode,
@@ -86,6 +90,9 @@ impl Terminal {
             paused: false,
             auto_scroll: true,
             timestamps: true,
+            analysis: Default::default(),
+            statistics: Default::default(),
+            view: Default::default(),
             show_controls: false,
             selection: Default::default(),
             receive_mode: ReceiveMode::Line,
@@ -114,6 +121,9 @@ impl Terminal {
         }
     }
     fn receive(&mut self, event: Arc<TrafficEvent>) {
+        self.statistics
+            .observe(&event, std::time::Instant::now(), self.lines.delimiter);
+        self.view.dirty = true;
         match event.direction {
             Direction::Rx => self.rx_bytes += event.bytes.len() as u64,
             Direction::Tx => self.tx_bytes += event.bytes.len() as u64,
@@ -136,21 +146,8 @@ impl Terminal {
             self.rx_breaks.insert(event.sequence);
             self.rx_gap = false;
         }
-        let pending_insert = (event.direction == Direction::Tx && self.lines.pending.is_some())
-            .then_some(self.lines.rows.len());
-        let evicted = self.lines.evicted_rows;
         self.lines.receive_with_framing(&event, self.active_framing);
-        if self.receive_mode == ReceiveMode::Line {
-            let dropped = self.lines.evicted_rows - evicted;
-            self.selection.evict(dropped);
-            if let Some(index) = pending_insert {
-                self.selection.insert_row(index.saturating_sub(dropped));
-            }
-        }
         if self.history.len() == HISTORY_LIMIT {
-            if self.receive_mode != ReceiveMode::Line {
-                self.selection.evict(1);
-            }
             self.history_framing.pop_front();
             if let Some(old) = self.history.pop_front() {
                 self.rx_breaks.remove(&old.sequence);
@@ -160,6 +157,9 @@ impl Terminal {
         self.history.push_back(event);
     }
     fn rebuild_lines(&mut self) {
+        self.view.dirty = true;
+        self.view.current = None;
+        self.view.scroll_to = None;
         self.selection.clear();
         self.lines.clear();
         for (event, framing) in self.history.iter().zip(&self.history_framing) {

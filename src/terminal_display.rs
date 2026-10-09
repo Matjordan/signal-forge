@@ -69,6 +69,7 @@ impl SerialFraming {
 #[derive(Debug, Clone)]
 pub struct RxTiming {
     pub first_timestamp: SystemTime,
+    pub first_sequence: u64,
     pub last_timestamp: SystemTime,
     /// All contributing bytes, including delimiters and display-truncated bytes.
     pub byte_count: u64,
@@ -76,12 +77,13 @@ pub struct RxTiming {
     pub framing: SerialFraming,
     pub mixed_framing: bool,
     wire_seconds: Option<f64>,
-    last_sequence: u64,
+    pub last_sequence: u64,
 }
 impl RxTiming {
     fn new(event: &TrafficEvent, framing: SerialFraming) -> Self {
         Self {
             first_timestamp: event.timestamp,
+            first_sequence: event.sequence,
             last_timestamp: event.timestamp,
             byte_count: 0,
             read_count: 1,
@@ -139,6 +141,8 @@ impl RxTiming {
 }
 #[derive(Debug, Clone)]
 pub struct DisplayRow {
+    /// Stable identity within this display, including pending rows.
+    pub id: u64,
     pub timestamp: SystemTime,
     pub direction: Direction,
     pub bytes: Vec<u8>,
@@ -153,6 +157,7 @@ pub struct LineDisplay {
     pub rows: VecDeque<DisplayRow>,
     pub pending: Option<DisplayRow>,
     pub evicted_rows: usize,
+    next_id: u64,
     skip_lf: bool,
     previous_cr: bool,
 }
@@ -168,6 +173,7 @@ impl LineDisplay {
             rows: VecDeque::new(),
             pending: None,
             evicted_rows: 0,
+            next_id: 0,
             skip_lf: false,
             previous_cr: false,
         }
@@ -189,14 +195,20 @@ impl LineDisplay {
         self.rows.push_back(row);
     }
     fn pending_row(&mut self, event: &TrafficEvent, framing: SerialFraming) -> &mut DisplayRow {
-        self.pending.get_or_insert_with(|| DisplayRow {
-            timestamp: event.timestamp,
-            direction: Direction::Rx,
-            bytes: Vec::new(),
-            complete: false,
-            terminator: Vec::new(),
-            truncated: false,
-            timing: Some(RxTiming::new(event, framing)),
+        let next_id = &mut self.next_id;
+        self.pending.get_or_insert_with(|| {
+            let id = *next_id;
+            *next_id += 1;
+            DisplayRow {
+                id,
+                timestamp: event.timestamp,
+                direction: Direction::Rx,
+                bytes: Vec::new(),
+                complete: false,
+                terminator: Vec::new(),
+                truncated: false,
+                timing: Some(RxTiming::new(event, framing)),
+            }
         })
     }
     fn finish(&mut self) {
@@ -211,7 +223,10 @@ impl LineDisplay {
     }
     pub fn receive_with_framing(&mut self, event: &TrafficEvent, framing: SerialFraming) {
         if event.direction == Direction::Tx {
+            let id = self.next_id;
+            self.next_id += 1;
             self.push(DisplayRow {
+                id,
                 timestamp: event.timestamp,
                 direction: Direction::Tx,
                 bytes: event.bytes.to_vec(),

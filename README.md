@@ -59,6 +59,14 @@ The **Files / RX** terminal tool sends files and records received bytes in Raw,
 ASCII, or Hex mode for either local or remote endpoints. See
 [file sending and RX recording](docs/terminal-files.md).
 
+## Traffic analysis
+
+Use a terminal’s **Analysis…** menu for Text, Hex, and byte-regex search, content
+filters, highlight rules, and optional timing/response annotations. **Display…**
+controls RX/TX visibility and direction labels independently. **Statistics…**
+shows totals, rates, line counts, RX gaps, and observed response latency, with a
+reset that preserves history. See [traffic analysis](docs/traffic-analysis.md).
+
 ## Preset profiles
 
 The left sidebar contains the active profile and quick command buttons. Click an endpoint card or terminal pane to select its target, then click a preset name to send. A terminal’s **Presets** tool offers the same commands for that pane. **Manage…** or the toolbar’s **Presets…** opens the library editor. **New preset** opens an editor for name, payload, encoding, escapes, line ending, selected/fixed endpoint target, description, shortcut, and optional repeat settings. **Edit**, **Delete**, **Up**, and **Down** update the profile immediately. A repeating preset refuses to replace a running repeat; stop that job first.

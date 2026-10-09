@@ -25,7 +25,12 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-update-') as directory:
     root.mkdir()
     settings = dict(path=os.ttyname(slave), baud=19200, data_bits=8, parity='None', stop_bits=1, flow='None')
     terminal = dict(settings=settings, hex=False, receive_mode='Line', delimiter='Auto', timestamps=True, show_controls=True,
-                    auto_scroll=True, encoding='Text', escapes=True, ending='None')
+                    auto_scroll=True, encoding='Text', escapes=True, ending='None',
+                    analysis=dict(visibility='Rx', direction_labels=False,
+                                  search=dict(mode='Text', value='READY'), filter=dict(mode='Text', value=''),
+                                  highlights=[dict(label='Fault', pattern=dict(mode='Text', value='ERROR'), emphasis='Error')],
+                                  delta_displayed=True, delta_rx=False, delta_tx=False,
+                                  line_span=False, response_latency=True))
     workspace = dict(version=2, ports=[settings], layout={'Leaf': {'tabs': [terminal], 'active': 0}},
                      windows=[], profile='Saved', selected=settings['path'])
     workspace_path = root / 'workspace.json'
