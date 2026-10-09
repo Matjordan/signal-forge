@@ -366,3 +366,28 @@ fn changed_framing_keeps_original_snapshot_and_sums_each_contribution() {
     );
     assert!(timing.tooltip().contains("Mixed settings"));
 }
+
+#[test]
+fn control_notation_preserves_unicode_binary_and_actual_split_terminators() {
+    use signal_forge::terminal_display::control_text;
+    assert_eq!(
+        control_text("λ\r\n\t\0\u{1b}\\literal".as_bytes()),
+        "λ\\r\\n\\t\\0\\x1B\\literal"
+    );
+    assert_eq!(control_text(b"\xff\x7f"), "\\xFF\\x7F");
+    for delimiter in [LineDelimiter::Auto, LineDelimiter::CrLf] {
+        let mut display = LineDisplay::new(delimiter);
+        feed(&mut display, &[b"STATUS=OK\r", b"\nNEXT\r", b"\n"]);
+        assert_eq!(display.len(), 2);
+        assert_eq!(display.rows[0].bytes, b"STATUS=OK");
+        assert_eq!(display.rows[0].terminator, b"\r\n");
+        assert_eq!(display.rows[1].terminator, b"\r\n");
+    }
+    let mut display = LineDisplay::default();
+    display.receive(&event(1, Direction::Rx, b"\r"));
+    display.receive(&event(2, Direction::Tx, b"COMMAND"));
+    display.receive(&event(3, Direction::Rx, b"\n"));
+    assert_eq!(display.len(), 2);
+    assert_eq!(display.rows[0].terminator, b"\r\n");
+    assert_eq!(display.rows[1].bytes, b"COMMAND");
+}

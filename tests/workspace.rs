@@ -12,6 +12,7 @@ fn terminal(path: &str) -> SavedTerminal {
         },
         hex: true,
         timestamps: false,
+        show_controls: true,
         auto_scroll: false,
         encoding: Encoding::Hex,
         ending: LineEnding::CrLf,

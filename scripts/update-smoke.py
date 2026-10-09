@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-update-') as directory:
     root = Path(directory) / 'signal-forge'
     root.mkdir()
     settings = dict(path=os.ttyname(slave), baud=19200, data_bits=8, parity='None', stop_bits=1, flow='None')
-    terminal = dict(settings=settings, hex=False, receive_mode='Line', delimiter='Auto', timestamps=True,
+    terminal = dict(settings=settings, hex=False, receive_mode='Line', delimiter='Auto', timestamps=True, show_controls=True,
                     auto_scroll=True, encoding='Text', escapes=True, ending='None')
     workspace = dict(version=2, ports=[settings], layout={'Leaf': {'tabs': [terminal], 'active': 0}},
                      windows=[], profile='Saved', selected=settings['path'])

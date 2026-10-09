@@ -84,6 +84,7 @@ impl TerminalViewer<'_> {
     }
 
     pub(super) fn display_controls(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
+        let previous_mode = tab.receive_mode;
         ui.horizontal_wrapped(|ui| {
             ui.selectable_value(&mut tab.receive_mode, ReceiveMode::Line, "Line");
             ui.selectable_value(&mut tab.receive_mode, ReceiveMode::RawChunks, "Raw Chunks");
@@ -111,10 +112,25 @@ impl TerminalViewer<'_> {
                 if previous != tab.lines.delimiter {
                     tab.rebuild_lines();
                 }
+                let old = (tab.timestamps, tab.show_controls);
                 ui.checkbox(&mut tab.timestamps, "Timestamps");
+                ui.checkbox(&mut tab.show_controls, "Show Control Characters");
+                if old != (tab.timestamps, tab.show_controls) {
+                    tab.selection.clear();
+                }
+                if ui.button("Copy All").clicked() {
+                    let rows = Self::row_count(tab);
+                    let text = (0..rows)
+                        .map(|index| Self::traffic_layout(tab, index).text)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    ui.ctx().copy_text(text);
+                    ui.close_menu();
+                }
                 ui.checkbox(&mut tab.auto_scroll, "Auto-scroll");
                 ui.checkbox(&mut tab.paused, "Pause display");
                 if ui.button("Clear").clicked() {
+                    tab.selection.clear();
                     tab.history.clear();
                     tab.history_framing.clear();
                     tab.lines.clear();
@@ -133,6 +149,9 @@ impl TerminalViewer<'_> {
                 );
             }
         });
+        if previous_mode != tab.receive_mode {
+            tab.selection.clear();
+        }
     }
 
     pub(super) fn connection_status(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
@@ -184,6 +203,37 @@ impl TerminalViewer<'_> {
             TerminalTool::Files => 240.0,
         };
         let terminal_height = (ui.available_height() - theme::SEND_AREA_HEIGHT - extra).max(40.0);
+        if !ui.input(|input| input.pointer.primary_down()) {
+            tab.selection.dragging = false;
+        }
+        let focus = egui::Id::new(("traffic-selection-focus", tab.endpoint.id().clone()));
+        let rect = egui::Rect::from_min_size(
+            ui.cursor().min,
+            egui::vec2(ui.available_width(), terminal_height),
+        );
+        ui.interact(rect, focus, egui::Sense::focusable_noninteractive());
+        if ui.memory(|memory| memory.has_focus(focus)) {
+            if ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::A)) {
+                let rows = Self::row_count(tab);
+                let columns = if rows == 0 {
+                    0
+                } else {
+                    Self::traffic_layout(tab, rows - 1).text.chars().count()
+                };
+                tab.selection.select_all(rows, columns);
+            }
+            if ui.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Copy))
+            }) {
+                ui.ctx()
+                    .copy_text(tab.selection.copy(Self::row_count(tab), |row| {
+                        Self::traffic_layout(tab, row).text
+                    }));
+            }
+        }
         theme::canvas_frame().show(ui, |ui| {
             egui::ScrollArea::both()
                 .id_salt((tab.endpoint.id().0.clone(), "traffic"))
@@ -200,15 +250,31 @@ impl TerminalViewer<'_> {
                         tab.history.len()
                     },
                     |ui, range| {
+                        if tab.selection.dragging {
+                            if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
+                                let clip = ui.clip_rect();
+                                let delta = if pointer.y < clip.top() {
+                                    12.0
+                                } else if pointer.y > clip.bottom() {
+                                    -12.0
+                                } else {
+                                    0.0
+                                };
+                                if delta != 0.0 {
+                                    ui.scroll_with_delta(egui::vec2(0.0, delta));
+                                    ui.ctx().request_repaint();
+                                }
+                            }
+                        }
                         for index in range {
-                            Self::traffic_row(ui, tab, index);
+                            Self::selectable_traffic_row(ui, tab, index);
                         }
                     },
                 );
         });
     }
 
-    fn traffic_row(ui: &mut egui::Ui, tab: &Terminal, index: usize) {
+    fn traffic_layout(tab: &Terminal, index: usize) -> egui::text::LayoutJob {
         let (timestamp, direction, bytes, incomplete, truncated) =
             if tab.receive_mode == ReceiveMode::Line {
                 let row = tab.lines.row(index).unwrap();
@@ -247,10 +313,22 @@ impl TerminalViewer<'_> {
         } else {
             String::new()
         };
-        let payload = match tab.receive_mode {
-            ReceiveMode::Hex => traffic::hex(bytes),
-            ReceiveMode::Line if direction == Direction::Rx => terminal_display::line_text(bytes),
-            _ => traffic::ascii(bytes),
+        let payload = if tab.show_controls && tab.receive_mode != ReceiveMode::Hex {
+            let mut text = terminal_display::control_text(bytes);
+            if tab.receive_mode == ReceiveMode::Line {
+                text.push_str(&terminal_display::control_text(
+                    &tab.lines.row(index).unwrap().terminator,
+                ));
+            }
+            text
+        } else {
+            match tab.receive_mode {
+                ReceiveMode::Hex => traffic::hex(bytes),
+                ReceiveMode::Line if direction == Direction::Rx => {
+                    terminal_display::line_text(bytes)
+                }
+                _ => traffic::ascii(bytes),
+            }
         };
         let chunk = if tab.receive_mode == ReceiveMode::Line {
             String::new()
@@ -306,7 +384,88 @@ impl TerminalViewer<'_> {
                 ..Default::default()
             },
         );
-        let response = ui.add(egui::Label::new(text).wrap_mode(egui::TextWrapMode::Extend));
+        text
+    }
+
+    fn row_count(tab: &Terminal) -> usize {
+        if tab.receive_mode == ReceiveMode::Line {
+            tab.lines.len()
+        } else {
+            tab.history.len()
+        }
+    }
+
+    #[cfg(test)]
+    fn traffic_row(ui: &mut egui::Ui, tab: &Terminal, index: usize) {
+        let response = ui.add(
+            egui::Label::new(Self::traffic_layout(tab, index))
+                .wrap_mode(egui::TextWrapMode::Extend),
+        );
+        if tab.receive_mode == ReceiveMode::Line {
+            if let Some(timing) = tab.lines.row(index).and_then(|row| row.timing.as_ref()) {
+                response.on_hover_text(timing.tooltip());
+            }
+        }
+    }
+
+    fn selectable_traffic_row(ui: &mut egui::Ui, tab: &mut Terminal, index: usize) {
+        use signal_forge::terminal_selection::Position;
+        let (pos, galley, response) = egui::Label::new(Self::traffic_layout(tab, index))
+            .wrap_mode(egui::TextWrapMode::Extend)
+            .sense(egui::Sense::click_and_drag())
+            .layout_in_ui(ui);
+        if response.is_pointer_button_down_on() && ui.input(|input| input.pointer.primary_pressed())
+        {
+            let focus = egui::Id::new(("traffic-selection-focus", tab.endpoint.id().clone()));
+            ui.memory_mut(|memory| memory.request_focus(focus));
+            if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
+                let point = Position {
+                    row: index,
+                    column: galley.cursor_from_pos(pointer - pos).ccursor.index,
+                };
+                if !tab.selection.dragging {
+                    tab.selection.anchor = Some(point);
+                    tab.selection.dragging = true;
+                    tab.auto_scroll = false;
+                }
+                tab.selection.head = Some(point);
+            }
+        }
+        if tab.selection.dragging {
+            if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
+                let clip = ui.clip_rect();
+                let y = pointer.y.clamp(clip.top() + 1.0, clip.bottom() - 1.0);
+                if y >= response.rect.top() && y <= response.rect.bottom() {
+                    tab.selection.head = Some(Position {
+                        row: index,
+                        column: galley
+                            .cursor_from_pos(egui::pos2(pointer.x, y) - pos)
+                            .ccursor
+                            .index,
+                    });
+                }
+            }
+        }
+        if let Some(range) = tab.selection.columns(index, galley.text().chars().count()) {
+            if !range.is_empty() {
+                let left = pos
+                    + galley
+                        .pos_from_ccursor(egui::text::CCursor::new(range.start))
+                        .left_top()
+                        .to_vec2();
+                let right = pos
+                    + galley
+                        .pos_from_ccursor(egui::text::CCursor::new(range.end))
+                        .right_bottom()
+                        .to_vec2();
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_max(left, right),
+                    0.0,
+                    ui.visuals().selection.bg_fill,
+                );
+            }
+        }
+        ui.painter().galley(pos, galley, theme::RX);
         if tab.receive_mode == ReceiveMode::Line {
             if let Some(timing) = tab.lines.row(index).and_then(|row| row.timing.as_ref()) {
                 response.on_hover_text(timing.tooltip());
@@ -689,6 +848,164 @@ mod timing_hover_tests {
         }
         text
     }
+    #[test]
+    fn retained_canvas_select_all_and_copy_include_offscreen_rows() {
+        let mut tab = Terminal::restored(&signal_forge::workspace::SavedTerminal {
+            settings: SerialSettings {
+                path: "/dev/test".into(),
+                ..Default::default()
+            },
+            timestamps: false,
+            auto_scroll: false,
+            ..Default::default()
+        });
+        tab.receive(Arc::new(TrafficEvent {
+            sequence: 1,
+            timestamp: UNIX_EPOCH,
+            endpoint: tab.endpoint.id().clone(),
+            direction: Direction::Rx,
+            bytes: Arc::from(
+                (0..300)
+                    .map(|i| format!("row {i}\r\n"))
+                    .collect::<String>()
+                    .into_bytes(),
+            ),
+        }));
+        let ctx = egui::Context::default();
+        let bus = TrafficBus::default();
+        let mut selected = None;
+        let mut known = Vec::new();
+        let mut request = None;
+        let mut library = false;
+        let mut render = |events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(500.0, 260.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        TerminalViewer {
+                            bus: &bus,
+                            selected: &mut selected,
+                            known_ports: &mut known,
+                            presets: &[],
+                            preset_request: &mut request,
+                            preset_library_open: &mut library,
+                        }
+                        .traffic_canvas(ui, &mut tab);
+                    });
+                },
+            )
+        };
+        let _ = render(vec![]);
+        let point = egui::pos2(30.0, 25.0);
+        let _ = render(vec![
+            egui::Event::PointerMoved(point),
+            egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+        ]);
+        let _ = render(vec![egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        let _ = render(vec![egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }]);
+        let copied = render(vec![egui::Event::Copy]);
+        let text = copied
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| {
+                if let egui::OutputCommand::CopyText(text) = command {
+                    Some(text)
+                } else {
+                    None
+                }
+            })
+            .expect("Focused canvas must copy retained selection");
+        assert!(text.starts_with("RX  row 0\n"), "{text}");
+        assert!(text.ends_with("RX  row 299"), "{text}");
+        assert_eq!(text.lines().count(), 300);
+        let _ = render(vec![
+            egui::Event::PointerMoved(point),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -600.0),
+                modifiers: Default::default(),
+            },
+        ]);
+        for _ in 0..30 {
+            let _ = render(vec![]);
+        }
+        let after_scroll = render(vec![egui::Event::Copy]);
+        let text = after_scroll
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| {
+                if let egui::OutputCommand::CopyText(text) = command {
+                    Some(text)
+                } else {
+                    None
+                }
+            })
+            .expect("Selection focus must survive scrolling its original rows offscreen");
+        assert_eq!(text.lines().count(), 300);
+        let _ = render(vec![
+            egui::Event::PointerMoved(point),
+            egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+        ]);
+        let _ = render(vec![egui::Event::PointerMoved(egui::pos2(100.0, 500.0))]);
+        for _ in 0..120 {
+            let _ = render(vec![]);
+        }
+        let _ = render(vec![egui::Event::PointerButton {
+            pos: egui::pos2(100.0, 500.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        let dragged = render(vec![egui::Event::Copy]);
+        let text = dragged
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| {
+                if let egui::OutputCommand::CopyText(text) = command {
+                    Some(text)
+                } else {
+                    None
+                }
+            })
+            .expect("Drag selection must remain copyable outside the viewport");
+        assert!(
+            text.lines().count() > 25,
+            "Drag must scroll through more than one viewport: {} rows",
+            text.lines().count()
+        );
+    }
+
     #[test]
     fn timing_is_hover_only_and_only_on_rx_line_rows() {
         let mut tab = Terminal::restored(&signal_forge::workspace::SavedTerminal {
