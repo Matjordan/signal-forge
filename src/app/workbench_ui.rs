@@ -53,6 +53,24 @@ impl Workbench {
             .filter(|(_, tab)| tab.endpoint.state() == ConnectionState::Connected)
             .map(|(_, tab)| tab.endpoint.id().clone())
             .collect();
+        let mut pair_name = self.pair_name.clone();
+        if kind == SetupKind::Pair && self.pairs.iter().any(|pair| pair.name == pair_name) {
+            // A new dialog must not reuse the last successfully created pair's name.
+            let base = self
+                .pair_name
+                .rsplit_once('-')
+                .filter(|(_, suffix)| suffix.parse::<u64>().is_ok())
+                .map_or(self.pair_name.as_str(), |(base, _)| base);
+            for number in 2u64.. {
+                let suffix = format!("-{number}");
+                // Existing pair names are validated ASCII, at most 64 bytes.
+                let candidate = format!("{}{}", &base[..base.len().min(64 - suffix.len())], suffix);
+                if !self.pairs.iter().any(|pair| pair.name == candidate) {
+                    pair_name = candidate;
+                    break;
+                }
+            }
+        }
         let parsed = signal_forge::ssh_serial::SshHost::parse(&self.settings.path).ok();
         self.setup = Some(SetupDialog {
             remote: parsed.is_some(),
@@ -75,7 +93,7 @@ impl Workbench {
             kind,
             settings: self.settings.clone(),
             baud: BaudControl::new(self.settings.baud),
-            pair_name: self.pair_name.clone(),
+            pair_name,
             pair_emulated: self.pair_emulated,
             pair_framing: self.pair_framing.clone(),
             pair_baud: BaudControl::new(self.pair_framing.baud),

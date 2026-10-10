@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import subprocess
 import tempfile
 import time
@@ -76,11 +77,35 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-virtual-ui-') as directory
             elapsed = time.monotonic() - started
             assert .36 < elapsed < .8, elapsed  # 768 * 10 / 19200 = .4 seconds
             subprocess.run(['import', '-window', window, '/tmp/signal-forge-virtual-timing.png'], check=True)
+            all_paths = list(paths)
+            # Each new dialog proposes an unused name, without manual renaming.
+            for name in ['bench-2', 'bench-3']:
+                click_control(window, log_path, 'Virtual Pair')
+                key('ctrl+Return')
+                wait(lambda: 'Created PTY pair ' + name + ':' in log_path.read_text())
+                match = re.search(r'Created PTY pair ' + re.escape(name) + r': (\S+) <-> (\S+)', log_path.read_text())
+                new_paths = match.groups()
+                assert not set(new_paths).intersection(all_paths), new_paths
+                all_paths.extend(new_paths)
+                clients = [os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK) for path in new_paths]
+                try:
+                    message = name.encode()
+                    os.write(clients[0], message)
+                    received = b''
+                    deadline = time.monotonic() + 3
+                    while len(received) < len(message) and time.monotonic() < deadline:
+                        if select.select([clients[1]], [], [], .1)[0]:
+                            received += os.read(clients[1], 64)
+                    assert received == message, (name, received)
+                finally:
+                    for client in clients:
+                        os.close(client)
+            assert 'already exists' not in log_path.read_text()
             key('ctrl+q')
             assert process.wait(timeout=5) == 0
             assert recording.read_bytes() == payload
-            assert all(not Path(path).exists() for path in paths)
-            print('Unprivileged GUI timing configuration, safe PTY settings, same-side ownership/peer access, progressive exact binary RX recording, and cleanup passed.', flush=True)
+            assert all(not Path(path).exists() for path in all_paths)
+            print('Unprivileged GUI timing configuration, safe PTY settings, same-side ownership/peer access, progressive exact binary RX recording, multiple automatically named pairs with independent byte flow, and cleanup passed.', flush=True)
         except BaseException:
             if process.poll() is None:
                 subprocess.run(['import', '-window', window, '/tmp/signal-forge-virtual-failure.png'], check=False)
