@@ -204,6 +204,7 @@ impl TerminalViewer<'_> {
                     tab.view.dirty = true;
                     tab.history.clear();
                     tab.history_framing.clear();
+                    tab.history_origins.clear();
                     tab.lines.clear();
                     tab.rx_breaks.clear();
                     tab.rx_gap = false;
@@ -297,6 +298,17 @@ impl TerminalViewer<'_> {
         );
         ui.interact(rect, focus, egui::Sense::focusable_noninteractive());
         if ui.memory(|memory| memory.has_focus(focus)) {
+            // Arrow keys must not move focus from traffic into a payload editor.
+            ui.memory_mut(|memory| {
+                memory.set_focus_lock_filter(
+                    focus,
+                    egui::EventFilter {
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        ..Default::default()
+                    },
+                )
+            });
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::A)) {
                 let rows = Self::row_count(tab);
                 let columns = if rows == 0 {
@@ -569,7 +581,23 @@ impl TerminalViewer<'_> {
             .wrap_mode(egui::TextWrapMode::Extend)
             .sense(egui::Sense::click_and_drag())
             .layout_in_ui(ui);
-        if response.is_pointer_button_down_on() && ui.input(|input| input.pointer.primary_pressed())
+        theme::trace_control(
+            &response,
+            &format!("{}:Traffic row {}", tab.endpoint.id().0, index),
+        );
+        let advance = galley.pos_from_ccursor(egui::text::CCursor::new(1)).min.x
+            - galley.pos_from_ccursor(egui::text::CCursor::new(0)).min.x;
+        let scale = ui.ctx().pixels_per_point();
+        log::debug!(
+            "UI traffic origin {}:{}: {},{},{}",
+            tab.endpoint.id().0,
+            index,
+            pos.x * scale,
+            response.rect.center().y * scale,
+            advance * scale
+        );
+        if (response.is_pointer_button_down_on() || response.clicked())
+            && ui.input(|input| input.pointer.primary_pressed())
         {
             let focus = egui::Id::new(("traffic-selection-focus", tab.endpoint.id().clone()));
             ui.memory_mut(|memory| memory.request_focus(focus));

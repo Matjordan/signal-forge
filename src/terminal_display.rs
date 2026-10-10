@@ -138,6 +138,20 @@ impl RxTiming {
         format!("{} bytes (including line endings)\nObserved RX span: {observed}\nCalculated wire time: {wire}\n{framing}\nObserved span is between OS read events; wire time is theoretical.", self.byte_count)
     }
 }
+/// Bounded event runs for the exact stored payload and visible terminator bytes.
+/// Stream offsets detect omitted delimiters, filtered rows, pauses and truncation.
+#[derive(Debug, Clone)]
+pub struct SourceRun {
+    pub start: usize,
+    pub len: usize,
+    pub sequence: u64,
+    pub timestamp: SystemTime,
+    pub framing: SerialFraming,
+    pub stream_offset: u64,
+    pub epoch: u64,
+}
+const SOURCE_RUN_LIMIT: usize = 1024;
+
 #[derive(Debug, Clone)]
 pub struct DisplayRow {
     /// Stable identity within this display, including pending rows.
@@ -150,6 +164,26 @@ pub struct DisplayRow {
     pub terminator: Vec<u8>,
     pub truncated: bool,
     pub timing: Option<RxTiming>,
+    pub sources: Vec<SourceRun>,
+}
+impl DisplayRow {
+    fn source(&mut self, mut source: SourceRun, start: usize) {
+        if let Some(last) = self.sources.last_mut() {
+            if last.sequence == source.sequence
+                && last.start + last.len == start
+                && last.stream_offset + last.len as u64 == source.stream_offset
+                && last.epoch == source.epoch
+                && last.framing == source.framing
+            {
+                last.len += source.len;
+                return;
+            }
+        }
+        if self.sources.len() < SOURCE_RUN_LIMIT {
+            source.start = start;
+            self.sources.push(source);
+        }
+    }
 }
 pub struct LineDisplay {
     pub delimiter: LineDelimiter,
@@ -159,6 +193,9 @@ pub struct LineDisplay {
     next_id: u64,
     skip_lf: bool,
     previous_cr: bool,
+    previous_source: Option<SourceRun>,
+    offsets: [u64; 2],
+    pub epoch: u64,
 }
 impl Default for LineDisplay {
     fn default() -> Self {
@@ -175,6 +212,9 @@ impl LineDisplay {
             next_id: 0,
             skip_lf: false,
             previous_cr: false,
+            previous_source: None,
+            offsets: [0; 2],
+            epoch: 0,
         }
     }
     pub fn clear(&mut self) {
@@ -185,6 +225,11 @@ impl LineDisplay {
         self.pending = None;
         self.skip_lf = false;
         self.previous_cr = false;
+        self.previous_source = None;
+        self.epoch += 1;
+    }
+    pub fn next_offset(&self, direction: Direction) -> u64 {
+        self.offsets[usize::from(direction == Direction::Tx)]
     }
     fn push(&mut self, row: DisplayRow) {
         if self.rows.len() == ROW_LIMIT {
@@ -207,6 +252,7 @@ impl LineDisplay {
                 terminator: Vec::new(),
                 truncated: false,
                 timing: Some(RxTiming::new(event, framing)),
+                sources: Vec::new(),
             }
         })
     }
@@ -221,6 +267,18 @@ impl LineDisplay {
         self.receive_with_framing(event, SerialFraming::from(&SerialSettings::default()));
     }
     pub fn receive_with_framing(&mut self, event: &TrafficEvent, framing: SerialFraming) {
+        let side = usize::from(event.direction == Direction::Tx);
+        let stream_start = self.offsets[side];
+        self.offsets[side] += event.bytes.len() as u64;
+        let origin = SourceRun {
+            start: 0,
+            len: event.bytes.len(),
+            sequence: event.sequence,
+            timestamp: event.timestamp,
+            framing,
+            stream_offset: stream_start,
+            epoch: self.epoch,
+        };
         if event.direction == Direction::Tx {
             let id = self.next_id;
             self.next_id += 1;
@@ -233,10 +291,17 @@ impl LineDisplay {
                 terminator: Vec::new(),
                 truncated: false,
                 timing: None,
+                sources: vec![origin],
             });
             return;
         }
-        for &byte in event.bytes.iter() {
+        for (offset, &byte) in event.bytes.iter().enumerate() {
+            let source = SourceRun {
+                len: 1,
+                stream_offset: stream_start + offset as u64,
+                ..origin.clone()
+            };
+            let previous_source = self.previous_source.replace(source.clone());
             if self.delimiter == LineDelimiter::Auto && self.skip_lf {
                 self.skip_lf = false;
                 if byte == b'\n' {
@@ -249,6 +314,7 @@ impl LineDisplay {
                         .find(|row| row.direction == Direction::Rx)
                     {
                         row.timing.as_mut().unwrap().observe_byte(event, framing);
+                        row.source(source, row.bytes.len() + row.terminator.len());
                         row.terminator.push(b'\n');
                     }
                     continue;
@@ -270,6 +336,8 @@ impl LineDisplay {
                     if let Some(row) = &mut self.pending {
                         if !row.truncated {
                             row.bytes.pop();
+                        } else if let Some(previous) = previous_source {
+                            row.source(previous, row.bytes.len());
                         }
                     }
                 }
@@ -279,12 +347,15 @@ impl LineDisplay {
                 } else {
                     vec![byte]
                 };
+                let row = self.pending.as_mut().unwrap();
+                row.source(source, row.bytes.len() + row.terminator.len() - 1);
                 self.finish();
                 self.previous_cr = false;
                 self.skip_lf = self.delimiter == LineDelimiter::Auto && byte == b'\r';
             } else {
                 let row = self.pending_row(event, framing);
                 if row.bytes.len() < LINE_BYTE_LIMIT {
+                    row.source(source, row.bytes.len());
                     row.bytes.push(byte);
                 } else {
                     row.truncated = true;

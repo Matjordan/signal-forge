@@ -1,6 +1,7 @@
 mod analysis_ui;
 mod baud_ui;
 mod replay_ui;
+mod selection_ui;
 mod session_ui;
 mod trigger_ui;
 use baud_ui::BaudControl;
@@ -42,6 +43,12 @@ struct Terminal {
     tool: terminal_ui::TerminalTool,
     history: VecDeque<Arc<TrafficEvent>>,
     history_framing: VecDeque<SerialFraming>,
+    history_origins: VecDeque<(u64, u64)>,
+    inspection_cache: Option<selection_ui::CachedInspection>,
+    inspector_dismissed: Option<(
+        signal_forge::terminal_selection::Position,
+        signal_forge::terminal_selection::Position,
+    )>,
     active_framing: SerialFraming,
     link_framing: Option<SerialFraming>,
     rx_gap: bool,
@@ -91,6 +98,9 @@ impl Terminal {
             settings,
             history: VecDeque::new(),
             history_framing: VecDeque::new(),
+            history_origins: VecDeque::new(),
+            inspector_dismissed: None,
+            inspection_cache: None,
             rx_gap: false,
             rx_breaks: std::collections::HashSet::new(),
             paused: false,
@@ -136,6 +146,9 @@ impl Terminal {
             Direction::Tx => self.tx_bytes += event.bytes.len() as u64,
         }
         if self.paused {
+            if event.direction == Direction::Tx {
+                self.lines.epoch += 1;
+            }
             if event.direction == Direction::Rx {
                 if self.lines.pending.is_some() {
                     self.selection.clear();
@@ -153,9 +166,12 @@ impl Terminal {
             self.rx_breaks.insert(event.sequence);
             self.rx_gap = false;
         }
+        self.history_origins
+            .push_back((self.lines.next_offset(event.direction), self.lines.epoch));
         self.lines.receive_with_framing(&event, self.active_framing);
         if self.history.len() == HISTORY_LIMIT {
             self.history_framing.pop_front();
+            self.history_origins.pop_front();
             if let Some(old) = self.history.pop_front() {
                 self.rx_breaks.remove(&old.sequence);
             }
@@ -169,10 +185,20 @@ impl Terminal {
         self.view.scroll_to = None;
         self.selection.clear();
         self.lines.clear();
-        for (event, framing) in self.history.iter().zip(&self.history_framing) {
+        let epochs: Vec<_> = self
+            .history_origins
+            .iter()
+            .map(|(_, epoch)| *epoch)
+            .collect();
+        self.history_origins.clear();
+        for (index, (event, framing)) in self.history.iter().zip(&self.history_framing).enumerate()
+        {
             if self.rx_breaks.contains(&event.sequence) {
                 self.lines.discard_pending();
             }
+            self.lines.epoch = epochs.get(index).copied().unwrap_or(self.lines.epoch);
+            self.history_origins
+                .push_back((self.lines.next_offset(event.direction), self.lines.epoch));
             self.lines.receive_with_framing(event, *framing);
         }
     }
@@ -264,6 +290,9 @@ impl TabViewer for TerminalViewer<'_> {
             .into()
     }
     fn on_tab_button(&mut self, tab: &mut Terminal, response: &egui::Response) {
+        if response.clicked() {
+            *self.selected = Some(tab.endpoint.id().clone());
+        }
         let color = if tab.endpoint.state() == ConnectionState::Connected {
             theme::CONNECTED
         } else {
@@ -457,6 +486,19 @@ impl Workbench {
             Err(error) => self.error = Some(format!("Device discovery: {error}")),
         }
     }
+    /// A focused traffic canvas accepts selection/copy keys, not text editing.
+    /// Keep normal workbench shortcuts available without enabling them in editors.
+    fn keyboard_editing(&self, ctx: &egui::Context) -> bool {
+        ctx.wants_keyboard_input()
+            && !ctx.memory(|memory| {
+                self.dock.iter_all_tabs().any(|(_, tab)| {
+                    memory.has_focus(egui::Id::new((
+                        "traffic-selection-focus",
+                        tab.endpoint.id().clone(),
+                    )))
+                })
+            })
+    }
     fn connect(&mut self) {
         if let Err(error) = self.baud_control.validate() {
             self.error = Some(error.into());
@@ -630,7 +672,7 @@ impl eframe::App for Workbench {
         self.bridge_monitors(ctx);
         let presets = self.library.profiles[self.profile_index].presets.clone();
         let mut preset_request = None;
-        egui::CentralPanel::default()
+        let traffic_area = egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(&ctx.style()).fill(theme::BACKGROUND))
             .show(ctx, |ui| {
                 if self.dock.iter_all_tabs().count() == 0 {
@@ -660,7 +702,17 @@ impl eframe::App for Workbench {
                         },
                     );
                 }
-            });
+            }).response.rect;
+        self.payload_shortcut(ctx);
+        if self.setup.is_none() && self.replay_setup.is_none() {
+            if let Some((_, tab)) = self
+                .dock
+                .iter_all_tabs_mut()
+                .find(|(_, tab)| self.selected.as_ref() == Some(tab.endpoint.id()))
+            {
+                selection_ui::show(ctx, tab, traffic_area);
+            }
+        }
         if let Some((id, preset)) = preset_request {
             self.selected = Some(id);
             self.dispatch_preset(preset);
