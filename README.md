@@ -233,3 +233,7 @@ text; recordings, captures, bridges, and transport bytes remain unchanged.
 ## Virtual link timing and external clients
 
 Virtual-pair setup offers **Unlimited** or **Emulated baud** with shared framing and independent full-duplex pacing. External programs use the peer of the side opened in Signal Forge. **Check paths/access** diagnoses ownership and permissions; **Release stale exclusive flag** recovers a side after an external client exits. All of this runs with ordinary user permissions. See [virtual pair compatibility and timing](docs/virtual-pairs.md).
+
+### Selection Inspector
+
+Highlight terminal traffic to inspect exact payload bytes, escaped ASCII/text, hex, observed event timing, calculated serial wire time and checksums. Selection XOR includes every selected byte; standard `$`/`!` NMEA validation is shown separately. See [selection semantics and timing](docs/selection-inspector.md).

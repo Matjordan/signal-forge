@@ -17,7 +17,7 @@ jobs:
       - name: Set version for this build
         run: python3 scripts/release-version.py --apply
       - name: Install Linux native dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick xdotool x11-utils desktop-file-utils openssh-client openssh-server socat picocom minicom screen
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev xvfb imagemagick xdotool x11-utils desktop-file-utils openssh-client openssh-server socat picocom minicom screen xclip
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check Rust formatting
@@ -33,13 +33,16 @@ jobs:
       - name: Graphical launch and real endpoint byte flow
         run: |
           python3 scripts/test-gui-smoke-support.py
-          xvfb-run -a -s "-screen 0 2560x1440x24 -noreset" sh -c 'python3 scripts/smoke.py && python3 scripts/workspace-smoke.py && python3 scripts/ui-smoke.py && python3 scripts/update-smoke.py && python3 scripts/session-smoke.py && python3 scripts/virtual-pair-smoke.py'
+          xvfb-run -a -s "-screen 0 2560x1440x24 -noreset" sh -c 'python3 scripts/smoke.py && python3 scripts/workspace-smoke.py && python3 scripts/ui-smoke.py && python3 scripts/update-smoke.py && python3 scripts/session-smoke.py && python3 scripts/virtual-pair-smoke.py && python3 scripts/selection-smoke.py'
       - name: Upload graphical smoke screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: linux-workbench-screenshot
           path: |
+            /tmp/signal-forge-selection-xor.png
+            /tmp/signal-forge-selection.png
+            /tmp/signal-forge-selection-failure.png
             /tmp/signal-forge-virtual-timing.png
             /tmp/signal-forge-virtual-failure.png
             /tmp/signal-forge-session.png

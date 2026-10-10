@@ -33,3 +33,5 @@ pub mod replay;
 pub mod triggered_capture;
 
 pub mod session;
+
+pub mod selection_inspector;

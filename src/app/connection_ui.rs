@@ -111,7 +111,7 @@ impl Workbench {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Q)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        if self.setup.is_some() || self.replay_setup.is_some() || ctx.wants_keyboard_input() {
+        if self.setup.is_some() || self.replay_setup.is_some() || self.keyboard_editing(ctx) {
             return;
         }
         let modifiers = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;

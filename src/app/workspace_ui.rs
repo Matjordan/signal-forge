@@ -242,7 +242,7 @@ impl Workbench {
         if self.setup.is_some() {
             return;
         }
-        if !ctx.wants_keyboard_input() {
+        if !self.keyboard_editing(ctx) {
             if ctx.input_mut(|i| {
                 i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::S)
             }) {
@@ -298,7 +298,7 @@ impl Workbench {
                 }
             }
         }
-        if !ctx.wants_keyboard_input()
+        if !self.keyboard_editing(ctx)
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::O))
         {
             self.open_setup(workbench_ui::SetupKind::Port);
@@ -333,7 +333,14 @@ impl Workbench {
                     .map(|(_, tab)| tab.endpoint.id().clone());
             }
         }
-        if !ctx.wants_keyboard_input()
+    }
+    /// Resolve explicit editor focus after pane clicks have selected their endpoint.
+    /// Traffic canvases accept copy keys but must still allow Ctrl+L to leave them.
+    pub(super) fn payload_shortcut(&mut self, ctx: &egui::Context) {
+        if self.setup.is_some() || self.replay_setup.is_some() {
+            return;
+        }
+        if !self.keyboard_editing(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::L))
         {
             if let Some(id) = &self.selected {
