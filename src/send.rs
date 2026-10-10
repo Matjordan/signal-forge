@@ -13,6 +13,50 @@ pub enum LineEnding {
     CrLf,
 }
 
+/// XOR is computed over parsed payload bytes, before the configured line ending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChecksumOutput {
+    Hex,
+    StarHex,
+    Raw,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Checksum {
+    pub skip_first: bool,
+    pub output: ChecksumOutput,
+}
+impl Default for Checksum {
+    fn default() -> Self {
+        Self {
+            skip_first: false,
+            output: ChecksumOutput::StarHex,
+        }
+    }
+}
+pub fn xor(bytes: &[u8]) -> u8 {
+    bytes.iter().fold(0, |sum, byte| sum ^ byte)
+}
+impl Checksum {
+    pub fn value(self, payload: &[u8]) -> u8 {
+        xor(if self.skip_first {
+            payload.get(1..).unwrap_or_default()
+        } else {
+            payload
+        })
+    }
+    /// Reusable transform for an already parsed payload, without its appended terminator.
+    pub fn append(self, payload: &mut Vec<u8>) {
+        let value = self.value(payload);
+        match self.output {
+            ChecksumOutput::Hex => payload.extend_from_slice(format!("{value:02X}").as_bytes()),
+            ChecksumOutput::StarHex => {
+                payload.extend_from_slice(format!("*{value:02X}").as_bytes())
+            }
+            ChecksumOutput::Raw => payload.push(value),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[error("{0}")]
 pub struct ParseError(pub String);
@@ -23,6 +67,17 @@ pub fn encode(
     encoding: Encoding,
     escapes: bool,
     ending: LineEnding,
+) -> Result<Vec<u8>, ParseError> {
+    encode_with_checksum(input, encoding, escapes, ending, None)
+}
+
+/// Parse/validate the entire payload, inject its checksum, then append the line ending.
+pub fn encode_with_checksum(
+    input: &str,
+    encoding: Encoding,
+    escapes: bool,
+    ending: LineEnding,
+    checksum: Option<Checksum>,
 ) -> Result<Vec<u8>, ParseError> {
     let mut output = match encoding {
         Encoding::Text if escapes => parse_escapes(input)?,
@@ -45,6 +100,9 @@ pub fn encode(
                 .collect::<Result<Vec<_>, _>>()?
         }
     };
+    if let Some(checksum) = checksum {
+        checksum.append(&mut output);
+    }
     output.extend_from_slice(match ending {
         LineEnding::None => b"",
         LineEnding::Cr => b"\r",

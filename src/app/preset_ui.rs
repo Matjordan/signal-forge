@@ -65,6 +65,7 @@ impl Workbench {
                 tab.encoding = preset.encoding;
                 tab.escapes = preset.escapes;
                 tab.ending = preset.ending;
+                tab.checksum = preset.checksum;
                 tab.remember_input();
             }
             self.error = result
@@ -307,6 +308,13 @@ impl Workbench {
                     ui.text_edit_singleline(id);
                     ui.small("Stable endpoint ID, e.g. serial:/dev/ttyUSB0");
                 }
+                super::terminal_ui::checksum_controls(
+                    ui,
+                    &mut self.preset_draft.checksum,
+                    &self.preset_draft.payload,
+                    self.preset_draft.encoding,
+                    self.preset_draft.escapes,
+                );
                 ui.label("Description");
                 ui.text_edit_singleline(&mut self.preset_draft.description);
                 ui.label("Shortcut (Ctrl+1 ... Ctrl+9, or empty)");

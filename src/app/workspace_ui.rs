@@ -45,6 +45,7 @@ impl Terminal {
             encoding: self.encoding,
             escapes: self.escapes,
             ending: self.ending,
+            checksum: self.checksum,
         }
     }
     pub(super) fn restored(saved: &SavedTerminal) -> Self {
@@ -73,6 +74,7 @@ impl Terminal {
         tab.encoding = saved.encoding;
         tab.escapes = saved.escapes;
         tab.ending = saved.ending;
+        tab.checksum = saved.checksum;
         tab
     }
 }
