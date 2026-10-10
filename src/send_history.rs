@@ -8,6 +8,7 @@ pub struct SendEntry {
     pub encoding: Encoding,
     pub escapes: bool,
     pub ending: LineEnding,
+    pub checksum: Option<crate::send::Checksum>,
 }
 #[derive(Default)]
 pub struct SendHistory {
@@ -66,6 +67,7 @@ mod tests {
             encoding: Encoding::Text,
             escapes: true,
             ending: LineEnding::None,
+            checksum: None,
         }
     }
     #[test]
@@ -88,6 +90,10 @@ mod tests {
             encoding: Encoding::Hex,
             escapes: false,
             ending: LineEnding::CrLf,
+            checksum: Some(crate::send::Checksum {
+                skip_first: true,
+                output: crate::send::ChecksumOutput::Raw,
+            }),
         };
         history.remember(binary.clone());
         history.remember(entry("text"));

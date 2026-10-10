@@ -21,6 +21,8 @@ pub struct SavedTerminal {
     pub encoding: Encoding,
     pub escapes: bool,
     pub ending: LineEnding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<crate::send::Checksum>,
 }
 impl Default for SavedTerminal {
     fn default() -> Self {
@@ -36,6 +38,7 @@ impl Default for SavedTerminal {
             encoding: Encoding::Text,
             escapes: true,
             ending: LineEnding::None,
+            checksum: None,
         }
     }
 }

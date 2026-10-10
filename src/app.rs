@@ -68,6 +68,7 @@ struct Terminal {
     encoding: Encoding,
     escapes: bool,
     ending: LineEnding,
+    checksum: Option<send::Checksum>,
     error: Option<String>,
     repeat: Option<RepeatHandle>,
     repeat_interval_ms: u64,
@@ -118,6 +119,7 @@ impl Terminal {
             encoding: Encoding::Text,
             escapes: true,
             ending: LineEnding::None,
+            checksum: None,
             error: None,
             repeat: None,
             repeat_interval_ms: 1000,
@@ -203,7 +205,13 @@ impl Terminal {
         }
     }
     fn send(&mut self) {
-        self.error = match send::encode(&self.input, self.encoding, self.escapes, self.ending) {
+        self.error = match send::encode_with_checksum(
+            &self.input,
+            self.encoding,
+            self.escapes,
+            self.ending,
+            self.checksum,
+        ) {
             Ok(bytes) if bytes.is_empty() => Some("Enter a payload or choose a line ending".into()),
             Ok(bytes) => match self.endpoint.send(bytes) {
                 Ok(()) => {
@@ -221,6 +229,7 @@ impl Terminal {
             encoding: self.encoding,
             escapes: self.escapes,
             ending: self.ending,
+            checksum: self.checksum,
         }
     }
     fn remember_input(&mut self) {
@@ -231,6 +240,7 @@ impl Terminal {
         self.encoding = entry.encoding;
         self.escapes = entry.escapes;
         self.ending = entry.ending;
+        self.checksum = entry.checksum;
         self.error = None;
     }
     fn history_older(&mut self) {
@@ -244,7 +254,13 @@ impl Terminal {
         }
     }
     fn start_repeat(&mut self) {
-        self.error = match send::encode(&self.input, self.encoding, self.escapes, self.ending) {
+        self.error = match send::encode_with_checksum(
+            &self.input,
+            self.encoding,
+            self.escapes,
+            self.ending,
+            self.checksum,
+        ) {
             Ok(bytes) => {
                 let spec = RepeatSpec {
                     interval: Duration::from_millis(self.repeat_interval_ms),

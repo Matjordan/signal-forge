@@ -78,7 +78,14 @@ with tempfile.TemporaryDirectory(prefix='signal-forge-workspace-') as directory:
         subprocess.run(['xdotool', 'type', '--clearmodifiers', 'restored'], check=True)
         key(window, 'Return')
         assert select.select([pairs[1][0]], [], [], 3)[0], 'Explicit reconnect/send failed'
-        assert os.read(pairs[1][0], 64) == b'restored'
+        # PTYs are byte streams; a read can contain only part of the message.
+        transmitted = b''
+        deadline = time.monotonic() + 3
+        while len(transmitted) < len(b'restored') and time.monotonic() < deadline:
+            if select.select([pairs[1][0]], [], [], .1)[0]:
+                transmitted += os.read(pairs[1][0], 64)
+        assert transmitted == b'restored', transmitted
+        assert not select.select([pairs[1][0]], [], [], .1)[0], 'Unexpected extra restored TX'
         key(window, 'ctrl+w')
         key(window, 'ctrl+s')
         assert 'Leaf' in json.loads(config_path.read_text())['layout'], 'Selected terminal did not close'

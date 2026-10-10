@@ -23,6 +23,8 @@ pub struct Preset {
     pub encoding: Encoding,
     pub escapes: bool,
     pub ending: LineEnding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<crate::send::Checksum>,
     pub target: PresetTarget,
     pub repeat: Option<RepeatSettings>,
     pub description: String,
@@ -37,6 +39,7 @@ impl Default for Preset {
             encoding: Encoding::Text,
             escapes: true,
             ending: LineEnding::None,
+            checksum: None,
             target: PresetTarget::Selected,
             repeat: None,
             description: String::new(),
@@ -46,8 +49,14 @@ impl Default for Preset {
 }
 impl Preset {
     pub fn bytes(&self) -> Result<Vec<u8>, String> {
-        let bytes = send::encode(&self.payload, self.encoding, self.escapes, self.ending)
-            .map_err(|e| e.to_string())?;
+        let bytes = send::encode_with_checksum(
+            &self.payload,
+            self.encoding,
+            self.escapes,
+            self.ending,
+            self.checksum,
+        )
+        .map_err(|e| e.to_string())?;
         if bytes.is_empty() || bytes.len() > 65536 {
             return Err("Preset payload must contain 1–65536 bytes".into());
         }
@@ -212,6 +221,7 @@ mod tests {
             encoding: Encoding::Hex,
             escapes: false,
             ending: LineEnding::CrLf,
+            checksum: None,
             target: PresetTarget::Endpoint("serial:/dev/ttyUSB0".into()),
             repeat: Some(RepeatSettings {
                 interval_ms: 20,

@@ -579,7 +579,8 @@ impl TerminalViewer<'_> {
         let source = tab.view.rows.get(index).map_or(index, |row| row.source);
         let (pos, galley, response) = egui::Label::new(Self::traffic_layout(tab, index))
             .wrap_mode(egui::TextWrapMode::Extend)
-            .sense(egui::Sense::click_and_drag())
+            // The canvas owns keyboard focus; rows must not steal it on release.
+            .sense(egui::Sense::CLICK | egui::Sense::DRAG)
             .layout_in_ui(ui);
         theme::trace_control(
             &response,
@@ -863,6 +864,11 @@ impl TerminalViewer<'_> {
                 ui.selectable_value(&mut tab.encoding, Encoding::Hex, "Hex bytes");
             }
             egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "ending"))
+                .width(if ui.max_rect().width() < 450.0 {
+                    55.0
+                } else {
+                    100.0
+                })
                 .selected_text(if ui.max_rect().width() < 450.0 {
                     format!("{:?}", tab.ending)
                 } else {
@@ -889,6 +895,7 @@ impl TerminalViewer<'_> {
                     },
                 ),
             );
+            checksum_controls(ui, &mut tab.checksum, &tab.input, tab.encoding, tab.escapes);
         });
     }
 
@@ -914,15 +921,14 @@ impl TerminalViewer<'_> {
                     egui::DragValue::new(&mut tab.repeat_count).range(1..=1000000),
                 );
             }
-            if ui
-                .add_enabled(
-                    !active
-                        && tab.endpoint.state() == ConnectionState::Connected
-                        && !tab.endpoint.read_only(),
-                    egui::Button::new("Start repeat"),
-                )
-                .clicked()
-            {
+            let start = ui.add_enabled(
+                !active
+                    && tab.endpoint.state() == ConnectionState::Connected
+                    && !tab.endpoint.read_only(),
+                egui::Button::new("Start repeat"),
+            );
+            theme::trace_control(&start, "Start repeat");
+            if start.clicked() {
                 tab.start_repeat();
             }
             if ui
@@ -1143,6 +1149,84 @@ impl TerminalViewer<'_> {
             ui.colored_label(theme::ERROR, format!("{}: {error}", tab.settings.path));
         }
     }
+}
+
+/// Shared terminal/preset control; preview uses exactly the same parsed bytes as TX.
+pub(super) fn checksum_controls(
+    ui: &mut egui::Ui,
+    checksum: &mut Option<send::Checksum>,
+    input: &str,
+    encoding: Encoding,
+    escapes: bool,
+) {
+    let parsed = send::encode(input, encoding, escapes, LineEnding::None);
+    let label = match (*checksum, &parsed) {
+        (None, _) => if ui.max_rect().width() < 450.0 {
+            "XOR: Off"
+        } else {
+            "Checksum: Off"
+        }
+        .to_owned(),
+        (Some(settings), Ok(bytes)) => format!("XOR: {:02X}", settings.value(bytes)),
+        (Some(_), Err(_)) => "XOR: invalid input".to_owned(),
+    };
+    let response = ui.menu_button(label, |ui| {
+        if theme::control(
+            ui,
+            "Checksum Off",
+            egui::SelectableLabel::new(checksum.is_none(), "Off"),
+        )
+        .clicked()
+        {
+            *checksum = None;
+        }
+        if theme::control(
+            ui,
+            "Checksum XOR",
+            egui::SelectableLabel::new(checksum.is_some(), "XOR"),
+        )
+        .clicked()
+        {
+            *checksum = Some(checksum.unwrap_or_default());
+        }
+        if let Some(settings) = checksum {
+            theme::control(
+                ui,
+                "Skip first byte",
+                egui::Checkbox::new(&mut settings.skip_first, "Skip first byte"),
+            );
+            ui.horizontal(|ui| {
+                ui.label("Output");
+                for (value, label) in [
+                    (send::ChecksumOutput::Hex, "Hex"),
+                    (send::ChecksumOutput::StarHex, "*Hex"),
+                    (send::ChecksumOutput::Raw, "Raw"),
+                ] {
+                    if theme::control(
+                        ui,
+                        &format!("Checksum {label}"),
+                        egui::SelectableLabel::new(settings.output == value, label),
+                    )
+                    .clicked()
+                    {
+                        settings.output = value;
+                    }
+                }
+            });
+            match &parsed {
+                Ok(bytes) => {
+                    ui.monospace(format!("Calculated XOR: 0x{:02X}", settings.value(bytes)));
+                }
+                Err(error) => {
+                    ui.colored_label(theme::ERROR, error.to_string());
+                }
+            }
+        }
+        ui.weak("Parsed bytes → checksum → configured line ending.");
+        ui.weak("Skip excludes exactly one byte; that byte is still sent.");
+        ui.weak("Escaped CR/LF inside the payload participate in XOR.");
+    });
+    theme::trace_control(&response.response, "Checksum options");
 }
 
 #[cfg(test)]

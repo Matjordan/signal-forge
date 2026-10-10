@@ -237,3 +237,5 @@ Virtual-pair setup offers **Unlimited** or **Emulated baud** with shared framing
 ### Selection Inspector
 
 Highlight terminal traffic to inspect exact payload bytes, escaped ASCII/text, hex, observed event timing, calculated serial wire time and checksums. Selection XOR includes every selected byte; standard `$`/`!` NMEA validation is shown separately. See [selection semantics and timing](docs/selection-inspector.md).
+
+Automatic TX XOR checksums support ASCII hex, `*XX`, and raw-byte output, optional first-byte exclusion, presets and repeats. See [TX checksum ordering and examples](docs/tx-checksum.md).

@@ -160,7 +160,7 @@ impl Inspection {
         });
     }
     pub fn xor(&self) -> u8 {
-        self.bytes.iter().fold(0, |sum, byte| sum ^ byte)
+        crate::send::xor(&self.bytes)
     }
     pub fn character_count(&self) -> Option<usize> {
         std::str::from_utf8(&self.bytes)
@@ -333,7 +333,7 @@ pub fn nmea_sentences(bytes: &[u8]) -> Vec<Nmea> {
         {
             continue;
         }
-        let calculated = bytes[start + 1..star].iter().fold(0, |sum, b| sum ^ b);
+        let calculated = crate::send::xor(&bytes[start + 1..star]);
         result.push(Nmea {
             bytes: start..star + 3,
             calculated,
