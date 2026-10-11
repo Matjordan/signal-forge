@@ -170,7 +170,11 @@ impl RollingCapture {
             } else {
                 self.options.post_bytes.saturating_sub(self.post_bytes)
             };
-            let count = remaining.min(event.bytes.len());
+            let count = if event.network.as_ref().is_some_and(|m| m.protocol.udp()) {
+                event.bytes.len()
+            } else {
+                remaining.min(event.bytes.len())
+            };
             self.post_bytes += count;
             if self.options.post_bytes > 0 && self.post_bytes >= self.options.post_bytes {
                 self.done = true;
@@ -185,14 +189,23 @@ impl RollingCapture {
             return (count > 0).then_some(clipped).into_iter().collect();
         }
         let mut triggered = false;
-        if event.direction == Direction::Rx && !event.bytes.is_empty() {
+        if event.direction == Direction::Rx
+            && (!event.bytes.is_empty() || event.network.as_ref().is_some_and(|m| m.protocol.udp()))
+        {
             match &self.options.trigger {
                 Trigger::Pattern(_) => {
+                    if event.network.as_ref().is_some_and(|m| m.protocol.udp()) {
+                        self.match_tail.clear();
+                    }
                     let mut window = std::mem::take(&mut self.match_tail);
                     window.extend_from_slice(&event.bytes);
                     triggered = self.matcher.as_ref().unwrap().is_match(&window);
                     // Bounded cross-read context; regex cannot see unlimited stream history.
-                    self.match_tail = window[window.len().saturating_sub(4095)..].to_vec();
+                    self.match_tail = if event.network.as_ref().is_some_and(|m| m.protocol.udp()) {
+                        Vec::new()
+                    } else {
+                        window[window.len().saturating_sub(4095)..].to_vec()
+                    };
                 }
                 Trigger::RxIdle(idle) => {
                     triggered = self
@@ -239,7 +252,7 @@ fn write_events(
                 "type": "event", "sequence": event.sequence,
                 "timestamp_unix_ns": timestamp_ns(event.timestamp).to_string(),
                 "direction": if event.direction == Direction::Rx { "rx" } else { "tx" },
-                "source_endpoint": event.endpoint.0, "raw_bytes": event.bytes.as_ref()
+                "source_endpoint": event.endpoint.0, "raw_bytes": event.bytes.as_ref(), "network": event.network
             }),
         )?;
         let mut status = progress.lock().unwrap();

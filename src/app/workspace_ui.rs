@@ -62,7 +62,9 @@ impl Terminal {
                     .unwrap_or_else(|| format!("serial:{}", saved.settings.path)),
             ),
             path: saved.settings.path.clone(),
-            name: if let Ok(config) =
+            name: if let Ok(network) = signal_forge_network::Config::parse(&saved.settings.path) {
+                network.label()
+            } else if let Ok(config) =
                 signal_forge::replay::ReplayConfig::parse(&saved.settings.path)
             {
                 format!("Replay: {}", config.path)
@@ -459,6 +461,7 @@ mod receive_display_tests {
                 endpoint: tab.endpoint.id().clone(),
                 direction: Direction::Rx,
                 bytes: Arc::from(*bytes),
+                network: None,
             });
             tab.receive(event.clone());
             originals.push(event);
@@ -489,6 +492,7 @@ mod receive_display_tests {
                 endpoint: tab.endpoint.id().clone(),
                 direction: Direction::Rx,
                 bytes: Arc::from(b"A\r\n".as_slice()),
+                network: None,
             }));
         }
         tab.settings.baud = 9600;
@@ -529,6 +533,7 @@ mod receive_display_tests {
                 endpoint: EndpointId("serial:/dev/test".into()),
                 direction: Direction::Rx,
                 bytes: Arc::from(bytes),
+                network: None,
             })
         };
         tab.receive(event(1, b"OLD\npartial"));

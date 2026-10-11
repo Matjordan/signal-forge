@@ -292,7 +292,7 @@ impl ReplayEndpoint {
                             continue;
                         }
                         drop(status);
-                        port.receive(&unit.bytes);
+                        port.receive_packet(&unit.bytes, unit.network.clone());
                         let mut status = shared.status.lock().unwrap();
                         if shared.stop.load(Ordering::Acquire) {
                             break;
@@ -300,11 +300,12 @@ impl ReplayEndpoint {
                         if epoch != *shared.epoch.lock().unwrap() {
                             continue;
                         }
-                        bus.publish_at(
+                        bus.publish_inner(
                             source.clone(),
                             unit.direction,
                             &unit.bytes,
-                            unix_time(unit.timestamp)?,
+                            Some(unix_time(unit.timestamp)?),
+                            unit.network.clone(),
                         );
                         status.events += 1;
                         status.bytes += unit.bytes.len() as u64;
@@ -400,6 +401,7 @@ fn unix_time(ns: i128) -> Result<SystemTime, String> {
     .ok_or_else(|| "Timestamp is out of range".into())
 }
 struct Unit {
+    network: Option<signal_forge_network::Metadata>,
     timestamp: i128,
     direction: Direction,
     bytes: Vec<u8>,
@@ -412,6 +414,16 @@ struct Snapshot {
 }
 impl Snapshot {
     fn unit(&mut self, timestamp: i128, direction: Direction, bytes: &[u8]) -> Result<(), String> {
+        self.unit_network(timestamp, direction, bytes, None)
+    }
+    fn unit_network(
+        &mut self,
+        timestamp: i128,
+        direction: Direction,
+        bytes: &[u8],
+        network: Option<signal_forge_network::Metadata>,
+    ) -> Result<(), String> {
+        let metadata = serde_json::to_vec(&network).map_err(|e| e.to_string())?;
         unix_time(timestamp)?;
         if bytes.len() > 65536 {
             return Err("Capture event exceeds 65536 bytes".into());
@@ -421,6 +433,8 @@ impl Snapshot {
             .and_then(|_| self.file.write_all(&[u8::from(direction == Direction::Tx)]))
             .and_then(|_| self.file.write_all(&(bytes.len() as u32).to_le_bytes()))
             .and_then(|_| self.file.write_all(bytes))
+            .and_then(|_| self.file.write_all(&(metadata.len() as u32).to_le_bytes()))
+            .and_then(|_| self.file.write_all(&metadata))
             .map_err(|e| e.to_string())?;
         self.events += 1;
         self.bytes += bytes.len() as u64;
@@ -445,7 +459,13 @@ impl Snapshot {
         self.file
             .read_exact(&mut bytes)
             .map_err(|e| e.to_string())?;
+        self.file.read_exact(&mut size).map_err(|e| e.to_string())?;
+        let mut metadata = vec![0; u32::from_le_bytes(size) as usize];
+        self.file
+            .read_exact(&mut metadata)
+            .map_err(|e| e.to_string())?;
         Ok(Some(Unit {
+            network: serde_json::from_slice(&metadata).map_err(|e| e.to_string())?,
             timestamp: i128::from_le_bytes(time),
             direction: if direction[0] == 0 {
                 Direction::Rx
@@ -583,7 +603,13 @@ impl Snapshot {
                     events += 1;
                     bytes += data.len() as u64;
                     if stream.includes(direction) {
-                        self.unit(timestamp, direction, &data)?;
+                        let network = value
+                            .get("network")
+                            .filter(|v| !v.is_null())
+                            .map(|v| serde_json::from_value(v.clone()))
+                            .transpose()
+                            .map_err(|e| format!("Invalid network metadata: {e}"))?;
+                        self.unit_network(timestamp, direction, &data, network)?;
                     }
                 }
                 Some("footer") if header && !footer => {

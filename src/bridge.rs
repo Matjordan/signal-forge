@@ -10,6 +10,12 @@ use std::sync::{
 };
 
 pub trait BridgeWriter: Send + Sync {
+    fn outgoing_metadata(&self) -> Option<signal_forge_network::Metadata> {
+        None
+    }
+    fn datagram(&self) -> bool {
+        false
+    }
     fn writable(&self) -> bool {
         true
     }
@@ -36,6 +42,8 @@ struct Route {
     destination: Arc<dyn BridgeWriter>,
     source: EndpointId,
     destination_id: EndpointId,
+    pending: Arc<Mutex<signal_forge_network::Packetizer>>,
+    ending: signal_forge_network::Ending,
 }
 impl Route {
     fn fault(&self, error: String) {
@@ -44,7 +52,39 @@ impl Route {
             *state = BridgeState::Fault(error);
         }
     }
-    fn forward(&self, bytes: &[u8]) {
+    fn forward(&self, bytes: &[u8], metadata: Option<signal_forge_network::Metadata>) {
+        if self.destination.datagram() && metadata.is_none() {
+            let result = self
+                .pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push_emitting(bytes, std::time::Instant::now(), |packet| {
+                    self.write_packet(&packet, None)
+                });
+            if let Err(error) = result {
+                self.fault(error);
+            }
+        } else if metadata.as_ref().is_some_and(|m| m.protocol.udp())
+            && !self.destination.datagram()
+        {
+            let mut payload = bytes.to_vec();
+            payload.extend_from_slice(self.ending.bytes());
+            self.write_packet(&payload, metadata);
+        } else {
+            self.write_packet(bytes, metadata);
+        }
+    }
+    fn tick(&self) {
+        let packets = self
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .tick(std::time::Instant::now());
+        for packet in packets {
+            self.write_packet(&packet, None);
+        }
+    }
+    fn write_packet(&self, bytes: &[u8], metadata: Option<signal_forge_network::Metadata>) {
         if !self.destination.writable() || self.shared.stopped.load(Ordering::Acquire) {
             return;
         }
@@ -53,10 +93,12 @@ impl Route {
             return;
         }
         match self.destination.write(bytes, &self.shared.stopped) {
-            Ok(true) => self
-                .shared
-                .monitor
-                .publish(self.source.clone(), Direction::Rx, bytes),
+            Ok(true) => self.shared.monitor.publish_network(
+                self.source.clone(),
+                Direction::Rx,
+                bytes,
+                metadata.or_else(|| self.destination.outgoing_metadata()),
+            ),
             Ok(false) => {}
             Err(error) => self.fault(format!(
                 "{} -> {}: {error}",
@@ -83,9 +125,18 @@ impl BridgePort {
         }
     }
     pub fn receive(&self, bytes: &[u8]) {
+        self.receive_packet(bytes, None);
+    }
+    pub fn receive_packet(&self, bytes: &[u8], metadata: Option<signal_forge_network::Metadata>) {
         let route = self.route.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if let Some(route) = route {
-            route.forward(bytes);
+            route.forward(bytes, metadata);
+        }
+    }
+    pub fn tick(&self) {
+        let route = self.route.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(route) = route {
+            route.tick();
         }
     }
     pub fn endpoint_closed(&self, reason: &str) {
@@ -111,6 +162,14 @@ pub struct Bridge {
 }
 impl Bridge {
     pub fn start(a: BridgePort, b: BridgePort) -> Result<Self, EndpointError> {
+        Self::start_configured(a, b, signal_forge_network::BridgeConfig::default())
+    }
+    pub fn start_configured(
+        a: BridgePort,
+        b: BridgePort,
+        config: signal_forge_network::BridgeConfig,
+    ) -> Result<Self, EndpointError> {
+        config.validate().map_err(EndpointError::Io)?;
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         if !a.writer.writable() && !b.writer.writable() {
             return Err(EndpointError::Io(
@@ -154,12 +213,20 @@ impl Bridge {
             destination: second.writer.clone(),
             source: first.id.clone(),
             destination_id: second.id.clone(),
+            pending: Arc::new(Mutex::new(signal_forge_network::Packetizer::new(
+                config.stream_to_udp.clone(),
+            ))),
+            ending: config.udp_to_stream.clone(),
         });
         *second_route = Some(Route {
             shared: shared.clone(),
             destination: first.writer.clone(),
             source: second.id.clone(),
             destination_id: first.id.clone(),
+            pending: Arc::new(Mutex::new(signal_forge_network::Packetizer::new(
+                config.stream_to_udp.clone(),
+            ))),
+            ending: config.udp_to_stream.clone(),
         });
         shared.stopped.store(false, Ordering::Release);
         drop(first_route);

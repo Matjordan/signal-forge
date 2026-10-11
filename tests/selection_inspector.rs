@@ -19,6 +19,7 @@ fn event(sequence: u64, direction: Direction, bytes: &[u8]) -> TrafficEvent {
         endpoint: EndpointId("serial:test".into()),
         direction,
         bytes: Arc::from(bytes),
+        network: None,
     }
 }
 fn inspection(bytes: &[u8]) -> Inspection {

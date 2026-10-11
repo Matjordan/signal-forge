@@ -2907,9 +2907,17 @@ dependencies = [
  "serde_json",
  "serialport",
  "sha2",
+ "signal-forge-network",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "signal-forge-network"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

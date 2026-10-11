@@ -8,6 +8,7 @@ pub struct EndpointId(pub String);
 pub enum ConnectionState {
     Connecting,
     Connected,
+    Listening,
     Disconnected,
     Fault(String),
 }
@@ -27,7 +28,12 @@ pub fn open(
     settings: &crate::config::SerialSettings,
     bus: crate::traffic::TrafficBus,
 ) -> Result<Box<dyn Endpoint>, EndpointError> {
-    if settings.path.starts_with("replay://") {
+    if crate::network::is_uri(&settings.path) {
+        Ok(Box::new(crate::network::NetworkEndpoint::open(
+            &settings.path,
+            bus,
+        )?))
+    } else if settings.path.starts_with("replay://") {
         Ok(Box::new(crate::replay::ReplayEndpoint::open(
             crate::replay::ReplayConfig::parse(&settings.path).map_err(EndpointError::Io)?,
             bus,
@@ -47,6 +53,9 @@ pub fn open(
 /// observed through TrafficBus; physical handles stay in transport workers.
 /// Bridges attach to the transport RX path and never subscribe to the monitor bus.
 pub trait Endpoint: Send {
+    fn network(&self) -> Option<signal_forge_network::Transport> {
+        None
+    }
     fn read_only(&self) -> bool {
         false
     }
@@ -81,6 +90,9 @@ pub trait Endpoint: Send {
 }
 
 impl<T: Endpoint + ?Sized> Endpoint for Box<T> {
+    fn network(&self) -> Option<signal_forge_network::Transport> {
+        (**self).network()
+    }
     fn read_only(&self) -> bool {
         (**self).read_only()
     }

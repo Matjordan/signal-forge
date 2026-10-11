@@ -165,7 +165,7 @@ fn write_event(
     };
     record(
         writer,
-        &serde_json::json!({"type":"event","sequence":event.sequence,"timestamp_unix_ns":timestamp.to_string(),"delta_ns":delta,"direction":direction,"source_endpoint":event.endpoint.0,"raw_bytes":event.bytes.as_ref(),"missed_before":missed}),
+        &serde_json::json!({"type":"event","sequence":event.sequence,"timestamp_unix_ns":timestamp.to_string(),"delta_ns":delta,"direction":direction,"source_endpoint":event.endpoint.0,"raw_bytes":event.bytes.as_ref(),"network":event.network,"missed_before":missed}),
     )?;
     *previous = Some((event.sequence, timestamp));
     let mut status = status.lock().unwrap_or_else(|e| e.into_inner());

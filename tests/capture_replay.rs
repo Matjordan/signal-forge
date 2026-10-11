@@ -18,6 +18,7 @@ fn event(seq: u64, ms: u64, direction: Direction, bytes: &[u8]) -> Arc<TrafficEv
         endpoint: EndpointId("test".into()),
         direction,
         bytes: Arc::from(bytes),
+        network: None,
     })
 }
 fn wait(mut predicate: impl FnMut() -> bool) {

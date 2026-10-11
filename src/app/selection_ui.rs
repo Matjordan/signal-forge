@@ -286,7 +286,7 @@ pub(super) fn show(ctx: &egui::Context, tab: &mut Terminal, traffic_area: egui::
         }
         match cache.wire {
             Some(seconds) => { ui.label(format!("Calculated serial wire time: {:.3} ms",seconds*1000.0)); }
-            None => { ui.weak("Calculated wire time unavailable: missing or invalid framing."); }
+            None => { ui.weak("Calculated wire time unavailable for network traffic or missing serial framing."); }
         }
         for framing in &cache.framing { ui.small(framing.label()); }
         ui.weak("Observed timing comes from OS read / TX events, not individual bytes. Wire time is calculated from captured framing; it excludes gaps and is not measured latency.");
@@ -320,6 +320,7 @@ mod tests {
             endpoint: tab.endpoint.id().clone(),
             direction,
             bytes: Arc::from(bytes),
+            network: None,
         }));
     }
     fn select_all(tab: &mut Terminal) {

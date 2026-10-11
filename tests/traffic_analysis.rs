@@ -17,6 +17,7 @@ fn event(sequence: u64, ms: u64, direction: Direction, bytes: &[u8]) -> TrafficE
         endpoint: EndpointId("test".into()),
         direction,
         bytes: Arc::from(bytes),
+        network: None,
     }
 }
 #[test]

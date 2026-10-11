@@ -39,3 +39,5 @@ pub mod selection_inspector;
 pub mod remote_config;
 
 pub mod help;
+
+pub mod network;

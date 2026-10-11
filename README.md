@@ -1,6 +1,6 @@
 # Signal Forge
 
-A Linux serial-port workbench implemented in Rust with egui/eframe. The app provides independently configured serial connections, dockable terminals, validated text/hex sending, independent repeated sends, saved preset profiles, owned virtual PTY pairs, full-duplex bridges, streaming captures, and saved workspaces.
+A Linux serial and network workbench implemented in Rust with egui/eframe. The app provides independently configured serial, TCP client/listener, and UDP client/listener connections, dockable terminals, validated text/hex sending, independent repeated sends, saved preset profiles, owned virtual PTY pairs, full-duplex bridges, streaming captures, and saved workspaces.
 
 ## Current implementation
 
@@ -155,3 +155,5 @@ with `--help` in CI. Physical adapters and electrical flow/parity behavior requi
 a local bench and are not claimed as PTY test coverage.
 
 Application icons are generated from [the canonical artwork](assets/signal-forge-source.png) with `python3 scripts/generate-icons.py`. The window embeds its icon and uses the `signal-forge` application ID to match the launcher on Linux. Self-update installs the verified release's launcher, icons, documentation and uninstall helper alongside the executable, with rollback of both executable and assets on a failed restart. Old executable-only installs acquire the embedded launcher/icons on first launch after updating. Standalone binaries outside a recognized installation do not create desktop files.
+
+Use **Network…** to open TCP/UDP endpoints. UDP preserves packet boundaries and peer addresses; stream-to-UDP bridges default to complete LF/CRLF lines. See [Network endpoints](docs/user-guide.md#network-endpoints) and [Network bridge framing](docs/user-guide.md#network-bridge-framing). Socket and framing code is isolated in `crates/network`, with Linux and Windows CI tests; the desktop application remains Linux-only.

@@ -87,7 +87,14 @@ pub struct RepeatJob {
 }
 impl RepeatJob {
     pub fn new(payload: Vec<u8>, spec: RepeatSpec) -> Result<(Self, RepeatHandle), EndpointError> {
-        if payload.is_empty() || payload.len() > 65536 {
+        Self::new_message(payload, spec, false)
+    }
+    pub(crate) fn new_message(
+        payload: Vec<u8>,
+        spec: RepeatSpec,
+        allow_empty: bool,
+    ) -> Result<(Self, RepeatHandle), EndpointError> {
+        if (!allow_empty && payload.is_empty()) || payload.len() > 65536 {
             return Err(EndpointError::Io(
                 "Repeat payload must contain 1–65536 bytes".into(),
             ));

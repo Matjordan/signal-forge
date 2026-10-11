@@ -19,6 +19,7 @@ pub struct TrafficEvent {
     pub endpoint: EndpointId,
     pub direction: Direction,
     pub bytes: Arc<[u8]>,
+    pub network: Option<signal_forge_network::Metadata>,
 }
 
 struct Subscriber {
@@ -83,7 +84,7 @@ impl TrafficBus {
     }
 
     pub fn publish(&self, endpoint: EndpointId, direction: Direction, bytes: &[u8]) {
-        self.publish_inner(endpoint, direction, bytes, None);
+        self.publish_inner(endpoint, direction, bytes, None, None);
     }
     /// Replay preserves original recorded timestamps without changing payloads.
     pub fn publish_at(
@@ -93,14 +94,24 @@ impl TrafficBus {
         bytes: &[u8],
         timestamp: SystemTime,
     ) {
-        self.publish_inner(endpoint, direction, bytes, Some(timestamp));
+        self.publish_inner(endpoint, direction, bytes, Some(timestamp), None);
     }
-    fn publish_inner(
+    pub fn publish_network(
+        &self,
+        endpoint: EndpointId,
+        direction: Direction,
+        bytes: &[u8],
+        network: Option<signal_forge_network::Metadata>,
+    ) {
+        self.publish_inner(endpoint, direction, bytes, None, network);
+    }
+    pub(crate) fn publish_inner(
         &self,
         endpoint: EndpointId,
         direction: Direction,
         bytes: &[u8],
         timestamp: Option<SystemTime>,
+        network: Option<signal_forge_network::Metadata>,
     ) {
         // Serialize sequence allocation and fan-out so every subscriber observes
         // the same ordering, even with independent serial worker threads.
@@ -112,6 +123,7 @@ impl TrafficBus {
             endpoint,
             direction,
             bytes: Arc::from(bytes),
+            network,
         });
         inner.subscribers.retain_mut(|subscriber| {
             if subscriber

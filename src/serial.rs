@@ -33,6 +33,12 @@ enum Command {
 }
 
 pub(crate) trait TransportReader: Read + Send {
+    fn datagram(&self) -> bool {
+        false
+    }
+    fn metadata(&mut self) -> Option<signal_forge_network::Metadata> {
+        None
+    }
     fn set_read_timeout(&mut self, timeout: Duration) -> Result<(), EndpointError>;
 }
 struct LocalReader(Box<dyn serialport::SerialPort>);
@@ -114,9 +120,19 @@ impl SerialEndpoint {
     pub(crate) fn from_io(
         id: EndpointId,
         name: String,
+        reader: impl TransportReader + 'static,
+        port: impl Write + Send + 'static,
+        bus: TrafficBus,
+    ) -> Result<Self, EndpointError> {
+        Self::from_io_network(id, name, reader, port, bus, None)
+    }
+    pub(crate) fn from_io_network(
+        id: EndpointId,
+        name: String,
         mut reader: impl TransportReader + 'static,
         port: impl Write + Send + 'static,
         bus: TrafficBus,
+        network: Option<signal_forge_network::Transport>,
     ) -> Result<Self, EndpointError> {
         let state = Arc::new(Mutex::new(ConnectionState::Connected));
         let stop = Arc::new(AtomicBool::new(false));
@@ -126,6 +142,7 @@ impl SerialEndpoint {
             stop: stop.clone(),
             bus: bus.clone(),
             id: id.clone(),
+            network,
         });
         let bridge = BridgePort::new(id.clone(), writer.clone());
         let worker_bridge = bridge.clone();
@@ -140,10 +157,28 @@ impl SerialEndpoint {
             .name(id.0.clone())
             .spawn(move || {
                 let mut buffer = [0; 65536];
+                let mut was_ready = false;
                 let mut repeat: Option<RepeatJob> = None;
                 let mut file: Option<crate::file_transfer::FileJob> = None;
                 let result = (|| -> Result<(), EndpointError> {
                     while !worker_stop.load(Ordering::Acquire) {
+                        let ready = worker_writer
+                            .network
+                            .as_ref()
+                            .is_none_or(|n| n.state() == signal_forge_network::State::Connected);
+                        if was_ready && !ready {
+                            repeat = None;
+                            if let Some(job) = file.take() {
+                                job.handle
+                                    .finish(crate::file_transfer::TransferState::Cancelled);
+                            }
+                            worker_file_active.store(false, Ordering::Release);
+                            worker_bridge.endpoint_closed("Network peer disconnected");
+                        }
+                        was_ready = ready;
+                        if ready {
+                            worker_bridge.tick();
+                        }
                         // Bound command processing so manual sends cannot starve RX or timers.
                         for _ in 0..8 {
                             if worker_stop.load(Ordering::Acquire) {
@@ -151,16 +186,29 @@ impl SerialEndpoint {
                             }
                             match rx.try_recv() {
                                 Ok(Command::Send(bytes)) => {
-                                    if !worker_writer.write(&bytes, &worker_stop)? {
-                                        return Ok(());
+                                    if !ready {
+                                        continue;
+                                    }
+                                    match worker_writer.write(&bytes, &worker_stop) {
+                                        Ok(true) => {}
+                                        Ok(false) => return Ok(()),
+                                        Err(_) if worker_writer.waiting_for_peer() => {}
+                                        Err(error) => return Err(error),
                                     }
                                 }
                                 Ok(Command::File(opened)) => {
+                                    if !ready {
+                                        opened
+                                            .handle
+                                            .finish(crate::file_transfer::TransferState::Cancelled);
+                                        worker_file_active.store(false, Ordering::Release);
+                                        continue;
+                                    }
                                     repeat = None;
                                     file = Some(opened);
                                 }
                                 Ok(Command::Repeat(job)) => {
-                                    if job.is_active() {
+                                    if ready && job.is_active() {
                                         repeat = Some(job);
                                     }
                                 }
@@ -212,19 +260,35 @@ impl SerialEndpoint {
                                         Err(error) => {
                                             job.handle
                                                 .finish(TransferState::Failed(error.to_string()));
-                                            return Err(error);
+                                            if worker_writer.waiting_for_peer() {
+                                                file = None;
+                                                worker_file_active.store(false, Ordering::Release);
+                                            } else {
+                                                return Err(error);
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                         if let Some(job) = &mut repeat {
-                            job.poll(Instant::now(), |bytes, cancelled| {
+                            if let Err(error) = job.poll(Instant::now(), |bytes, cancelled| {
                                 worker_writer.write(bytes, cancelled)
-                            })?;
+                            }) {
+                                if worker_writer.waiting_for_peer() {
+                                    repeat = None;
+                                } else {
+                                    return Err(error);
+                                }
+                            }
                         }
                         if repeat.as_ref().is_some_and(|job| !job.is_active()) {
                             repeat = None;
+                        }
+                        // Observe a listener peer loss before accepting a replacement:
+                        // old jobs and incomplete bridge frames belong to the old peer.
+                        if ready && worker_writer.waiting_for_peer() {
+                            continue;
                         }
                         // Shorten RX waits to the next timer deadline. Serial reads remain
                         // bounded when a job is stopped, even for very long intervals.
@@ -235,10 +299,18 @@ impl SerialEndpoint {
                             .clamp(Duration::from_millis(1), Duration::from_millis(20));
                         reader.set_read_timeout(timeout)?;
                         match reader.read(&mut buffer) {
-                            Ok(0) => return Err(EndpointError::Io("serial device closed".into())),
+                            Ok(0) if !reader.datagram() => {
+                                return Err(EndpointError::Io("serial device closed".into()))
+                            }
                             Ok(count) => {
-                                bus.publish(worker_id.clone(), Direction::Rx, &buffer[..count]);
-                                worker_bridge.receive(&buffer[..count]);
+                                let metadata = reader.metadata();
+                                bus.publish_network(
+                                    worker_id.clone(),
+                                    Direction::Rx,
+                                    &buffer[..count],
+                                    metadata.clone(),
+                                );
+                                worker_bridge.receive_packet(&buffer[..count], metadata);
                             }
                             Err(e)
                                 if matches!(
@@ -425,7 +497,7 @@ impl Endpoint for SerialEndpoint {
         if self.state() != ConnectionState::Connected || self.stop.load(Ordering::Acquire) {
             return Err(EndpointError::Disconnected);
         }
-        let (job, handle) = RepeatJob::new(bytes, spec)?;
+        let (job, handle) = RepeatJob::new_message(bytes, spec, self.writer.datagram())?;
         self.tx
             .try_send(Command::Repeat(job))
             .map_err(|e| match e {
@@ -499,9 +571,28 @@ struct SerialWriter {
     stop: Arc<AtomicBool>,
     bus: TrafficBus,
     id: EndpointId,
+    network: Option<signal_forge_network::Transport>,
 }
 impl BridgeWriter for SerialWriter {
+    fn outgoing_metadata(&self) -> Option<signal_forge_network::Metadata> {
+        let network = self.network.as_ref()?;
+        if !network.is_udp() {
+            return None;
+        }
+        let (local, peer) = network.addresses();
+        Some(signal_forge_network::Metadata {
+            protocol: network.mode(),
+            source: local?,
+            destination: peer?,
+        })
+    }
+    fn datagram(&self) -> bool {
+        self.network.as_ref().is_some_and(|n| n.is_udp())
+    }
     fn state(&self) -> ConnectionState {
+        if let Some(network) = &self.network {
+            return crate::network::state(network.state());
+        }
         self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     fn write(&self, bytes: &[u8], cancelled: &AtomicBool) -> Result<bool, EndpointError> {
@@ -512,6 +603,20 @@ impl BridgeWriter for SerialWriter {
         let Some(port) = port.as_mut() else {
             return Err(EndpointError::Disconnected);
         };
+        if let Some(network) = &self.network {
+            if cancelled.load(Ordering::Acquire) {
+                return Ok(false);
+            }
+            let result = network.send_observed(bytes, cancelled, |written, metadata| {
+                self.bus
+                    .publish_network(self.id.clone(), Direction::Tx, written, metadata)
+            });
+            return match result {
+                Ok(_) => Ok(true),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => Ok(false),
+                Err(error) => Err(EndpointError::Io(error.to_string())),
+            };
+        }
         let result = write_payload(
             &mut **port,
             bytes,
@@ -531,11 +636,31 @@ impl BridgeWriter for SerialWriter {
 }
 
 impl SerialWriter {
+    fn waiting_for_peer(&self) -> bool {
+        self.network
+            .as_ref()
+            .is_some_and(|n| n.state() == signal_forge_network::State::Listening)
+    }
     fn write_file(
         &self,
         bytes: &[u8],
         handle: &crate::file_transfer::FileTransferHandle,
     ) -> Result<bool, EndpointError> {
+        if let Some(network) = &self.network {
+            let _port = self.port.lock().unwrap_or_else(|e| e.into_inner());
+            let result = network.send_observed(bytes, &handle.cancel, |written, metadata| {
+                self.bus
+                    .publish_network(self.id.clone(), Direction::Tx, written, metadata);
+                handle
+                    .sent
+                    .fetch_add(written.len() as u64, Ordering::Release);
+            });
+            return match result {
+                Ok(_) => Ok(true),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => Ok(false),
+                Err(error) => Err(EndpointError::Io(error.to_string())),
+            };
+        }
         let mut port = self.port.lock().unwrap_or_else(|e| e.into_inner());
         let Some(port) = port.as_mut() else {
             return Err(EndpointError::Disconnected);

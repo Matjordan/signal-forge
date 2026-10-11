@@ -6,6 +6,17 @@ on:
 permissions:
   contents: read
 jobs:
+  portable-network:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Portable TCP/UDP socket and framing tests
+        run: cargo test --locked -p signal-forge-network
   linux:
     runs-on: ubuntu-24.04
     steps:
@@ -34,13 +45,15 @@ jobs:
         run: |
           python3 scripts/test-gui-smoke-support.py
           python3 scripts/test-remote-discovery.py
-          xvfb-run -a -s "-screen 0 2560x1440x24 -noreset" sh -c 'python3 scripts/smoke.py && python3 scripts/workspace-smoke.py && python3 scripts/ui-smoke.py && python3 scripts/update-smoke.py && python3 scripts/session-smoke.py && python3 scripts/virtual-pair-smoke.py && python3 scripts/selection-smoke.py && python3 scripts/tx-checksum-smoke.py && python3 scripts/remote-browser-smoke.py && python3 scripts/help-smoke.py'
+          xvfb-run -a -s "-screen 0 2560x1440x24 -noreset" sh -c 'python3 scripts/smoke.py && python3 scripts/workspace-smoke.py && python3 scripts/ui-smoke.py && python3 scripts/update-smoke.py && python3 scripts/session-smoke.py && python3 scripts/virtual-pair-smoke.py && python3 scripts/selection-smoke.py && python3 scripts/tx-checksum-smoke.py && python3 scripts/remote-browser-smoke.py && python3 scripts/help-smoke.py && python3 scripts/network-smoke.py'
       - name: Upload graphical smoke screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: linux-workbench-screenshot
           path: |
+            /tmp/signal-forge-network.png
+            /tmp/signal-forge-network-minimum.png
             /tmp/signal-forge-help.png
             /tmp/signal-forge-help-hover.png
             /tmp/signal-forge-help-minimum.png

@@ -37,7 +37,11 @@ pub struct SerialFraming {
 impl From<&SerialSettings> for SerialFraming {
     fn from(settings: &SerialSettings) -> Self {
         Self {
-            baud: settings.baud,
+            baud: if crate::network::is_uri(&settings.path) {
+                0
+            } else {
+                settings.baud
+            },
             data_bits: settings.data_bits,
             parity: settings.parity,
             stop_bits: settings.stop_bits,
@@ -54,6 +58,9 @@ impl SerialFraming {
             .map(|bits| byte_count as f64 * bits as f64 / self.baud as f64)
     }
     pub fn label(self) -> String {
+        if self.baud == 0 {
+            return "Network · UART wire time unavailable".into();
+        }
         let parity = match self.parity {
             Parity::None => 'N',
             Parity::Odd => 'O',
@@ -165,6 +172,7 @@ pub struct DisplayRow {
     pub truncated: bool,
     pub timing: Option<RxTiming>,
     pub sources: Vec<SourceRun>,
+    pub network: Option<signal_forge_network::Metadata>,
 }
 impl DisplayRow {
     fn source(&mut self, mut source: SourceRun, start: usize) {
@@ -260,6 +268,7 @@ impl LineDisplay {
                 truncated: false,
                 timing: Some(RxTiming::new(event, framing)),
                 sources: Vec::new(),
+                network: None,
             }
         })
     }
@@ -273,7 +282,10 @@ impl LineDisplay {
     pub fn receive(&mut self, event: &TrafficEvent) {
         self.receive_with_framing(event, SerialFraming::from(&SerialSettings::default()));
     }
-    pub fn receive_with_framing(&mut self, event: &TrafficEvent, framing: SerialFraming) {
+    pub fn receive_with_framing(&mut self, event: &TrafficEvent, mut framing: SerialFraming) {
+        if event.network.as_ref().is_some_and(|m| m.protocol.udp()) {
+            framing.baud = 0;
+        }
         let side = usize::from(event.direction == Direction::Tx);
         let stream_start = self.offsets[side];
         self.offsets[side] += event.bytes.len() as u64;
@@ -286,20 +298,26 @@ impl LineDisplay {
             stream_offset: stream_start,
             epoch: self.epoch,
         };
-        if event.direction == Direction::Tx {
+        if event.direction == Direction::Tx
+            || event.network.as_ref().is_some_and(|m| m.protocol.udp())
+        {
             let id = self.next_id;
             self.next_id += 1;
             self.push(DisplayRow {
                 id,
                 timestamp: event.timestamp,
-                direction: Direction::Tx,
+                direction: event.direction,
                 bytes: event.bytes.to_vec(),
                 complete: true,
                 terminator: Vec::new(),
                 truncated: false,
                 timing: None,
                 sources: vec![origin],
+                network: event.network.clone(),
             });
+            if event.network.as_ref().is_some_and(|m| m.protocol.udp()) {
+                self.epoch += 1;
+            }
             return;
         }
         for (offset, &byte) in event.bytes.iter().enumerate() {
