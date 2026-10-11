@@ -102,7 +102,11 @@ pub fn card_frame() -> egui::Frame {
 pub fn control(ui: &mut egui::Ui, key: &str, widget: impl egui::Widget) -> egui::Response {
     let response = ui.add(widget);
     trace_control(&response, key);
-    response
+    if let Some(topic) = super::help_ui::topic_for_control(key) {
+        super::help_ui::explain(response, topic)
+    } else {
+        response
+    }
 }
 
 pub fn button(ui: &mut egui::Ui, label: &str) -> egui::Response {

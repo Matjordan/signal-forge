@@ -32,6 +32,12 @@ impl Default for TriggerUi {
     }
 }
 impl TriggerUi {
+    pub(super) fn picker_open(&self) -> bool {
+        self.dialog
+            .as_ref()
+            .is_some_and(|dialog| dialog.state() == egui_file_dialog::DialogState::Open)
+    }
+
     pub(super) fn finish(&mut self) {
         if let Some(capture) = &mut self.capture {
             capture.finish();

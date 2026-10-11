@@ -297,7 +297,7 @@ impl TerminalViewer<'_> {
             } else {
                 "Analysis…"
             };
-            ui.menu_button(label, |ui| {
+            let menu = ui.menu_button(label, |ui| {
                 ui.style_mut().wrap_mode = None;
                 egui::ScrollArea::vertical()
                     .id_salt("analysis-options")
@@ -396,6 +396,7 @@ impl TerminalViewer<'_> {
                         }
                     });
             });
+            help_ui::explain(menu.response, "analysis.search");
             if tab.analysis != old {
                 tab.view.dirty = true;
                 tab.selection.clear();
@@ -405,7 +406,7 @@ impl TerminalViewer<'_> {
             } else {
                 "Statistics…"
             };
-            ui.menu_button(label, |ui| {
+            let stats_menu = ui.menu_button(label, |ui| {
                 ui.style_mut().wrap_mode = None;
                 let now = std::time::Instant::now();
                 let stats = &tab.statistics;
@@ -452,6 +453,7 @@ impl TerminalViewer<'_> {
                     tab.view.dirty = true;
                 }
             });
+            help_ui::explain(stats_menu.response, "analysis.timing");
         });
     }
 }

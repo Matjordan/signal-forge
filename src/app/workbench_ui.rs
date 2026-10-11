@@ -127,13 +127,15 @@ impl Workbench {
                         self.open_setup(kind);
                     }
                 }
-                if ui
-                    .add_enabled(self.config_recoverable, egui::Button::new("Save Workspace"))
-                    .clicked()
+                if help_ui::explain(
+                    ui.add_enabled(self.config_recoverable, egui::Button::new("Save Workspace")),
+                    "workspace.save",
+                )
+                .clicked()
                 {
                     self.save_workspace();
                 }
-                if ui.button("Workspace…").clicked() {
+                if theme::button(ui, "Workspace…").clicked() {
                     self.open_setup(SetupKind::Workspace);
                 }
                 if theme::button(ui, "2 Tiles")
@@ -148,21 +150,26 @@ impl Workbench {
                 {
                     self.arrange_tiles(true);
                 }
-                if ui.button("Presets…").clicked() {
+                if theme::button(ui, "Presets…").clicked() {
                     self.preset_library_open = true;
                 }
-                if ui.button("Replay…").clicked() {
+                if theme::button(ui, "Replay…").clicked() {
                     self.replay_setup = Some(Default::default());
                 }
-                if ui
-                    .button(if self.session.is_some() {
+                if help_ui::explain(
+                    ui.button(if self.session.is_some() {
                         "Session (active)"
                     } else {
                         "Session…"
-                    })
-                    .clicked()
+                    }),
+                    "session.manage",
+                )
+                .clicked()
                 {
                     self.session_ui.open = true;
+                }
+                if theme::button(ui, "Help").clicked() {
+                    self.help.open_current();
                 }
                 if ui.button("Refresh").clicked() {
                     self.refresh();
