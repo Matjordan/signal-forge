@@ -295,24 +295,33 @@ impl Workbench {
                                 }
                             });
                         }
-                        self.remote_hosts_ui(ui);
                         if entries.is_empty() {
                             ui.weak("No open terminals");
                         }
-                        egui::CollapsingHeader::new("Available / recent devices")
-                            .default_open(entries.is_empty())
+                        egui::CollapsingHeader::new("Local ports")
+                            .id_salt("local-ports")
+                            .default_open(true)
                             .show(ui, |ui| {
                                 let mut paths = self.ports.clone();
                                 for saved in &self.config.ports {
-                                    if !paths.contains(&saved.path) {
+                                    if !saved.path.contains("://") && !paths.contains(&saved.path) {
                                         paths.push(saved.path.clone());
                                     }
+                                }
+                                if paths.is_empty() {
+                                    ui.weak("No local ports detected");
                                 }
                                 egui::ScrollArea::vertical()
                                     .max_height(160.0)
                                     .show(ui, |ui| {
                                         for path in paths {
-                                            if ui.button(&path).clicked() {
+                                            if theme::control(
+                                                ui,
+                                                &format!("Open local {path}"),
+                                                egui::Button::new(&path),
+                                            )
+                                            .clicked()
+                                            {
                                                 self.open_setup(SetupKind::Port);
                                                 if let Some(dialog) = &mut self.setup {
                                                     dialog.settings = self
@@ -346,6 +355,7 @@ impl Workbench {
                                         }
                                     });
                             });
+                        self.remote_hosts_ui(ui);
                         self.connections_ui(ui);
                         ui.separator();
                         ui.horizontal(|ui| {
