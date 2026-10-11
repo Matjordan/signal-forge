@@ -15,6 +15,7 @@ fn event(sequence: u64, direction: Direction, bytes: &[u8]) -> TrafficEvent {
         endpoint: EndpointId("A".into()),
         direction,
         bytes: Arc::from(bytes),
+        network: None,
     }
 }
 fn feed(display: &mut LineDisplay, chunks: &[&[u8]]) {

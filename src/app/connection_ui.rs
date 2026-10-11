@@ -61,8 +61,24 @@ impl Workbench {
                     .bridge_port()
             })
             .collect();
-        match ports.and_then(|ports| Bridge::start(ports[0].clone(), ports[1].clone())) {
+        match ports.and_then(|ports| {
+            Bridge::start_configured(
+                ports[0].clone(),
+                ports[1].clone(),
+                self.bridge_config.clone(),
+            )
+        }) {
             Ok(bridge) => {
+                self.config
+                    .network_bridges
+                    .retain(|saved| saved.a != bridge.a || saved.b != bridge.b);
+                self.config
+                    .network_bridges
+                    .push(signal_forge::config::SavedNetworkBridge {
+                        a: bridge.a.clone(),
+                        b: bridge.b.clone(),
+                        config: self.bridge_config.clone(),
+                    });
                 let events = bridge.subscribe(512);
                 self.bridges.push(BridgeView {
                     bridge,
@@ -150,7 +166,7 @@ impl Workbench {
                         [path, &pair.raw_paths[side]].contains(&&tab.settings.path)
                             && matches!(
                                 tab.endpoint.state(),
-                                ConnectionState::Connected | ConnectionState::Connecting
+                                ConnectionState::Connected | ConnectionState::Connecting | ConnectionState::Listening
                             )
                     });
                     ui.small(if owned {

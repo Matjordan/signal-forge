@@ -35,6 +35,7 @@ fn event(sequence: u64, a: bool, millis: u64) -> Arc<TrafficEvent> {
         endpoint: EndpointId(if a { "A" } else { "B" }.into()),
         direction: Direction::Rx,
         bytes: Arc::from([0, 255]),
+        network: None,
     })
 }
 #[test]

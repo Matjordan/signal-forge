@@ -53,6 +53,8 @@ pub(super) fn topic_for_control(key: &str) -> Option<&'static str> {
         "Bridge" | "+ Bridge" => "bridge.create",
         "2 Tiles" | "4 Tiles" | "Save Workspace" | "Workspace…" => "workspace.save",
         "Replay…" => "capture.replay",
+        "Network…" | "Network host" | "Network bind" | "Open network" | "UDP reply target"
+        | "Set UDP target" => "network.setup",
         "Session…" | "Session (active)" => "session.manage",
         "Presets…" | "Presets" => "tx.presets",
         "Line" | "Raw Chunks" | "Hex" => "terminal.modes",

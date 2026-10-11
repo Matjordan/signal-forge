@@ -413,6 +413,15 @@ impl TerminalViewer<'_> {
                 ui.label("Statistics since creation / last reset");
                 let (rx, tx) = stats.rates(now);
                 ui.label(format!("RX {} B · TX {} B", stats.rx_bytes, stats.tx_bytes));
+                if stats.rx_datagrams > 0
+                    || stats.tx_datagrams > 0
+                    || tab.endpoint.network().is_some_and(|n| n.is_udp())
+                {
+                    ui.label(format!(
+                        "UDP datagrams RX {} · TX {} (including empty packets)",
+                        stats.rx_datagrams, stats.tx_datagrams
+                    ));
+                }
                 ui.label(format!("Recent RX {rx} B/s · TX {tx} B/s (1 s window)"));
                 ui.label(format!(
                     "RX lines {} · elapsed {}",
@@ -478,6 +487,7 @@ mod tests {
             endpoint: tab.endpoint.id().clone(),
             direction,
             bytes: Arc::from(bytes),
+            network: None,
         }));
     }
     #[test]

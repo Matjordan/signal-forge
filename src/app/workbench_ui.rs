@@ -18,6 +18,7 @@ pub(super) struct SetupDialog {
     pair_framing: SerialSettings,
     pair_baud: BaudControl,
     directory: String,
+    bridge_config: signal_forge_network::BridgeConfig,
     a: Option<EndpointId>,
     b: Option<EndpointId>,
     workspace_path: String,
@@ -31,6 +32,9 @@ pub(super) struct SetupDialog {
 }
 
 pub(super) fn framing(settings: &SerialSettings) -> String {
+    if let Ok(config) = signal_forge_network::Config::parse(&settings.path) {
+        return format!("{} · no UART framing", config.mode.label());
+    }
     format!(
         "{} · {}{}{} · {:?}",
         settings.baud,
@@ -104,6 +108,7 @@ impl Workbench {
             pair_framing: self.pair_framing.clone(),
             pair_baud: BaudControl::new(self.pair_framing.baud),
             directory: self.pair_directory.clone(),
+            bridge_config: self.bridge_config.clone(),
             a: self.bridge_a.clone().or_else(|| connected.first().cloned()),
             b: self.bridge_b.clone().or_else(|| connected.get(1).cloned()),
             workspace_path: WorkspaceConfig::path()
@@ -152,6 +157,9 @@ impl Workbench {
                 }
                 if theme::button(ui, "Presets…").clicked() {
                     self.preset_library_open = true;
+                }
+                if theme::button(ui, "Network…").clicked() {
+                    self.network_setup = Some(Default::default());
                 }
                 if theme::button(ui, "Replay…").clicked() {
                     self.replay_setup = Some(Default::default());
@@ -270,7 +278,9 @@ impl Workbench {
                             .collect();
                         for (id, path, state, summary) in &entries {
                             let color = match state {
-                                ConnectionState::Connected => theme::CONNECTED,
+                                ConnectionState::Connected | ConnectionState::Listening => {
+                                    theme::CONNECTED
+                                }
                                 ConnectionState::Connecting => theme::MUTED,
                                 ConnectionState::Disconnected => theme::MUTED,
                                 ConnectionState::Fault(_) => theme::ERROR,
@@ -514,6 +524,9 @@ impl Workbench {
                     }
                     if dialog.a.is_some() && dialog.a == dialog.b { ui.colored_label(theme::ERROR, "Choose two different connected endpoints."); }
                     ui.weak("RX on A forwards to B. RX on B forwards to A.");
+                    let saved = self.config.network_bridges.iter().find(|saved| Some(&saved.a)==dialog.a.as_ref() && Some(&saved.b)==dialog.b.as_ref());
+                    if let Some(saved)=saved { if ui.button("Use saved framing").clicked(){dialog.bridge_config=saved.config.clone();} }
+                    network_ui::bridge_framing_ui(ui, &mut dialog.bridge_config);
                 }
                 SetupKind::Workspace => {
                     ui.label("Workspace JSON path"); ui.text_edit_singleline(&mut dialog.workspace_path);
@@ -575,6 +588,7 @@ impl Workbench {
                         self.setup = Some(dialog);
                         return;
                     }
+                    self.bridge_config = dialog.bridge_config.clone();
                     self.bridge_a = dialog.a.clone();
                     self.bridge_b = dialog.b.clone();
                     self.start_bridge();

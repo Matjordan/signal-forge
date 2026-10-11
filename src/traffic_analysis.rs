@@ -191,6 +191,8 @@ pub struct Statistics {
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub rx_lines: u64,
+    pub rx_datagrams: u64,
+    pub tx_datagrams: u64,
     pub longest_rx_gap: Option<Duration>,
     pub last_latency: Option<Latency>,
     pub latency_count: u64,
@@ -216,6 +218,8 @@ impl Statistics {
             rx_bytes: 0,
             tx_bytes: 0,
             rx_lines: 0,
+            rx_datagrams: 0,
+            tx_datagrams: 0,
             longest_rx_gap: None,
             last_latency: None,
             latency_count: 0,
@@ -262,12 +266,18 @@ impl Statistics {
                 ..Default::default()
             };
         }
+        if event.network.as_ref().is_some_and(|m| m.protocol.udp()) {
+            match event.direction {
+                Direction::Rx => self.rx_datagrams += 1,
+                Direction::Tx => self.tx_datagrams += 1,
+            }
+        }
         let count = event.bytes.len() as u64;
         match event.direction {
             Direction::Tx => {
                 self.tx_bytes += count;
                 bucket.tx += count;
-                if count > 0 {
+                if count > 0 || event.network.as_ref().is_some_and(|m| m.protocol.udp()) {
                     if self
                         .pending_tx
                         .replace((event.sequence, event.timestamp))
@@ -280,7 +290,7 @@ impl Statistics {
             Direction::Rx => {
                 self.rx_bytes += count;
                 bucket.rx += count;
-                if count == 0 {
+                if count == 0 && !event.network.as_ref().is_some_and(|m| m.protocol.udp()) {
                     return;
                 }
                 if let Some(previous) = self.last_rx {
@@ -312,6 +322,10 @@ impl Statistics {
                     } else {
                         self.clock_regressions += 1;
                     }
+                }
+                if event.network.as_ref().is_some_and(|m| m.protocol.udp()) {
+                    self.skip_lf = false;
+                    self.previous_cr = false;
                 }
                 for &byte in event.bytes.iter() {
                     if delimiter == LineDelimiter::Auto && self.skip_lf {

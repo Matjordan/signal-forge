@@ -1,6 +1,7 @@
 mod analysis_ui;
 mod baud_ui;
 mod help_ui;
+mod network_ui;
 mod replay_ui;
 mod selection_ui;
 mod session_ui;
@@ -81,6 +82,7 @@ struct Terminal {
     repeat_count: u64,
     continuous: bool,
     trigger: trigger_ui::TriggerUi,
+    udp_reply: String,
     file_path: String,
     file_dialog: Option<(egui_file_dialog::FileDialog, bool)>,
     file_mode: signal_forge::file_transfer::FileMode,
@@ -136,6 +138,7 @@ impl Terminal {
             repeat_count: 10,
             continuous: false,
             trigger: Default::default(),
+            udp_reply: String::new(),
             file_path: String::new(),
             file_dialog: None,
             file_mode: signal_forge::file_transfer::FileMode::Raw,
@@ -181,9 +184,13 @@ impl Terminal {
             self.preserve_rx_gap = false;
             self.rx_gap = false;
         }
+        let mut framing = self.active_framing;
+        if event.network.as_ref().is_some_and(|m| m.protocol.udp()) {
+            framing.baud = 0;
+        }
         self.history_origins
             .push_back((self.lines.next_offset(event.direction), self.lines.epoch));
-        self.lines.receive_with_framing(&event, self.active_framing);
+        self.lines.receive_with_framing(&event, framing);
         if self.history.len() == HISTORY_LIMIT {
             self.history_framing.pop_front();
             self.history_origins.pop_front();
@@ -191,7 +198,7 @@ impl Terminal {
                 self.rx_breaks.remove(&old.sequence);
             }
         }
-        self.history_framing.push_back(self.active_framing);
+        self.history_framing.push_back(framing);
         self.history.push_back(event);
     }
     fn rebuild_lines(&mut self) {
@@ -231,7 +238,11 @@ impl Terminal {
             self.ending,
             self.checksum,
         ) {
-            Ok(bytes) if bytes.is_empty() => Some("Enter a payload or choose a line ending".into()),
+            Ok(bytes)
+                if bytes.is_empty() && !self.endpoint.network().is_some_and(|n| n.is_udp()) =>
+            {
+                Some("Enter a payload or choose a line ending".into())
+            }
             Ok(bytes) => match self.endpoint.send(bytes) {
                 Ok(()) => {
                     self.remember_input();
@@ -409,6 +420,7 @@ pub struct Workbench {
     updater: update_ui::UpdateController,
     setup: Option<workbench_ui::SetupDialog>,
     replay_setup: Option<replay_ui::ReplaySetup>,
+    network_setup: Option<signal_forge_network::Config>,
     preset_library_open: bool,
     active_bridge: usize,
     pairs: Vec<signal_forge::virtual_pair::VirtualPair>,
@@ -418,6 +430,7 @@ pub struct Workbench {
     pair_diagnostics: Vec<signal_forge::virtual_pair::PathDiagnostic>,
     pair_directory: String,
     bridges: Vec<connection_ui::BridgeView>,
+    bridge_config: signal_forge_network::BridgeConfig,
     bridge_a: Option<EndpointId>,
     bridge_b: Option<EndpointId>,
     library: PresetLibrary,
@@ -471,6 +484,7 @@ impl Workbench {
             updater: update_ui::UpdateController::new(update_enabled, restart, update_failure),
             setup: None,
             replay_setup: None,
+            network_setup: None,
             preset_library_open: false,
             active_bridge: 0,
             pairs: Vec::new(),
@@ -482,6 +496,7 @@ impl Workbench {
             pair_diagnostics: Vec::new(),
             pair_directory: String::new(),
             bridges: Vec::new(),
+            bridge_config: Default::default(),
             bridge_a: None,
             bridge_b: None,
             library,
@@ -532,6 +547,7 @@ impl Workbench {
     /// Keep normal workbench shortcuts available without enabling them in editors.
     fn keyboard_editing(&self, ctx: &egui::Context) -> bool {
         self.remote_edit.is_some()
+            || self.network_setup.is_some()
             || ctx.wants_keyboard_input()
                 && !ctx.memory(|memory| {
                     self.dock.iter_all_tabs().any(|(_, tab)| {
@@ -555,7 +571,9 @@ impl Workbench {
         {
             if matches!(
                 tab.endpoint.state(),
-                ConnectionState::Connected | ConnectionState::Connecting
+                ConnectionState::Connected
+                    | ConnectionState::Connecting
+                    | ConnectionState::Listening
             ) {
                 self.error = Some(format!("{} already connected", self.settings.path));
                 return;
@@ -682,7 +700,9 @@ impl eframe::App for Workbench {
         for (_, tab) in self.dock.iter_all_tabs() {
             if !matches!(
                 tab.endpoint.state(),
-                ConnectionState::Connected | ConnectionState::Connecting
+                ConnectionState::Connected
+                    | ConnectionState::Connecting
+                    | ConnectionState::Listening
             ) {
                 tab.trigger.stop();
                 if let Some(recording) = &tab.recording {
@@ -713,6 +733,7 @@ impl eframe::App for Workbench {
         self.help.begin_frame(ctx);
         self.toolbar_ui(ctx);
         self.replay_setup_ui(ctx);
+        self.network_setup_ui(ctx);
         self.session_panel(ctx);
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -788,7 +809,7 @@ impl eframe::App for Workbench {
         if !self.help.open {
             self.payload_shortcut(ctx);
         }
-        if self.setup.is_none() && self.replay_setup.is_none() {
+        if self.setup.is_none() && self.replay_setup.is_none() && self.network_setup.is_none() {
             if let Some((_, tab)) = self
                 .dock
                 .iter_all_tabs_mut()
@@ -823,6 +844,7 @@ impl eframe::App for Workbench {
         let flags = [
             self.setup.is_some(),
             self.replay_setup.is_some(),
+            self.network_setup.is_some(),
             self.remote_edit.is_some(),
             self.preset_editor_open,
             self.preset_library_open,

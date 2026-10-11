@@ -5,6 +5,7 @@ edition = "2021"
 description = "Linux serial-port workbench"
 
 [dependencies]
+signal-forge-network = { path = "crates/network" }
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
 egui_dock = "0.16"
 egui-file-dialog = { version = "0.9", default-features = false }
@@ -25,3 +26,6 @@ flate2 = "1"
 tar = "0.4"
 semver = "1"
 tempfile = "3"
+
+[workspace]
+members = ["crates/network"]

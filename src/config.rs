@@ -39,6 +39,8 @@ impl Default for SerialSettings {
 #[serde(default)]
 pub struct WorkspaceConfig {
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub network_bridges: Vec<SavedNetworkBridge>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub remote_hosts: Vec<crate::ssh_serial::SavedSshHost>,
     pub version: u32,
     pub ports: Vec<SerialSettings>,
@@ -47,10 +49,17 @@ pub struct WorkspaceConfig {
     pub profile: Option<String>,
     pub selected: Option<String>,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedNetworkBridge {
+    pub a: crate::endpoint::EndpointId,
+    pub b: crate::endpoint::EndpointId,
+    pub config: signal_forge_network::BridgeConfig,
+}
 impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self {
             version: 2,
+            network_bridges: Vec::new(),
             remote_hosts: Vec::new(),
             ports: Vec::new(),
             layout: None,
@@ -119,6 +128,19 @@ impl WorkspaceConfig {
             {
                 return Err("Invalid or duplicate SSH host display name".into());
             }
+        }
+        if self.network_bridges.len() > 256 {
+            return Err("Too many saved bridges".into());
+        }
+        for bridge in &self.network_bridges {
+            if bridge.a == bridge.b
+                || [&bridge.a.0, &bridge.b.0]
+                    .iter()
+                    .any(|id| id.is_empty() || id.len() > 4096)
+            {
+                return Err("Invalid saved bridge endpoints".into());
+            }
+            bridge.config.validate()?;
         }
         for port in &self.ports {
             port.validate()?;
@@ -231,6 +253,9 @@ impl WorkspaceConfig {
 
 impl SerialSettings {
     pub fn validate(&self) -> Result<(), String> {
+        if crate::network::is_uri(&self.path) {
+            signal_forge_network::Config::parse(&self.path)?;
+        }
         if self.path.starts_with("replay://") {
             crate::replay::ReplayConfig::parse(&self.path)?;
         }

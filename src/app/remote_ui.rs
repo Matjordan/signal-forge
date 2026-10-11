@@ -33,7 +33,15 @@ impl Terminal {
         &self,
         bus: TrafficBus,
     ) -> Result<Box<dyn Endpoint>, EndpointError> {
-        if self.settings.path.starts_with("ssh://") {
+        if signal_forge::network::is_uri(&self.settings.path) {
+            Ok(Box::new(
+                signal_forge::network::NetworkEndpoint::open_identified(
+                    &self.settings.path,
+                    bus,
+                    self.endpoint.id().clone(),
+                )?,
+            ))
+        } else if self.settings.path.starts_with("ssh://") {
             let host = self
                 .ssh_connection
                 .clone()
@@ -241,7 +249,9 @@ impl Workbench {
                     tab.settings.path == self.settings.path
                         && matches!(
                             tab.endpoint.state(),
-                            ConnectionState::Connected | ConnectionState::Connecting
+                            ConnectionState::Connected
+                                | ConnectionState::Connecting
+                                | ConnectionState::Listening
                         )
                 });
                 if !active {
@@ -434,6 +444,7 @@ mod tests {
                 timestamp: std::time::SystemTime::now(),
                 direction: Direction::Rx,
                 bytes: bytes.to_vec().into(),
+                network: None,
             })
         };
         tab.receive(event(1, b"BEFORE"));

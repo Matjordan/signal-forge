@@ -182,6 +182,29 @@ fn real_ssh_binary_repeat_file_recording_bridges_and_failures() {
     other_master.write_all(b"remote B\r\n").unwrap();
     read(&mut master, b"remote B\r\n");
     bridge.stop();
+    let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp_config = signal_forge_network::Config {
+        host: "127.0.0.1".into(),
+        port: tcp_listener.local_addr().unwrap().port(),
+        ..Default::default()
+    };
+    let mut tcp =
+        signal_forge::network::NetworkEndpoint::open(&tcp_config.uri(), bus.clone()).unwrap();
+    let (mut tcp_peer, _) = tcp_listener.accept().unwrap();
+    tcp_peer
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    ready(&tcp);
+    let mut bridge =
+        Bridge::start(endpoint.bridge_port().unwrap(), tcp.bridge_port().unwrap()).unwrap();
+    tcp_peer.write_all(&[0, 255, 3]).unwrap();
+    read(&mut master, &[0, 255, 3]);
+    master.write_all(&[255, 0, 4]).unwrap();
+    let mut tcp_bytes = [0; 3];
+    tcp_peer.read_exact(&mut tcp_bytes).unwrap();
+    assert_eq!(tcp_bytes, [255, 0, 4]);
+    bridge.stop();
+    tcp.disconnect();
     endpoint.disconnect();
     assert_eq!(endpoint.state(), ConnectionState::Disconnected);
     endpoint = remote(&path, bus.clone());

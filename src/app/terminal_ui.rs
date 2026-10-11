@@ -25,7 +25,9 @@ impl TerminalViewer<'_> {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 let connected = matches!(
                     tab.endpoint.state(),
-                    ConnectionState::Connected | ConnectionState::Connecting
+                    ConnectionState::Connected
+                        | ConnectionState::Connecting
+                        | ConnectionState::Listening
                 );
                 ui.add_enabled_ui(!connected, |ui| {
                     tab.baud_control.ui(ui, &mut tab.settings.baud);
@@ -242,18 +244,23 @@ impl TerminalViewer<'_> {
     pub(super) fn connection_status(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
         ui.horizontal_wrapped(|ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-            let connected = matches!(tab.endpoint.state(), ConnectionState::Connected | ConnectionState::Connecting);
+            let connected = matches!(tab.endpoint.state(), ConnectionState::Connected | ConnectionState::Connecting | ConnectionState::Listening);
             let (state, color) = match tab.endpoint.state() {
                 ConnectionState::Connected => ("Connected", theme::CONNECTED),
                 ConnectionState::Connecting => ("Connecting…", theme::MUTED),
+                ConnectionState::Listening => ("Listening", theme::CONNECTED),
                 ConnectionState::Disconnected => ("Disconnected", theme::MUTED),
                 ConnectionState::Fault(_) => ("Fault", theme::ERROR),
             };
             theme::status_dot(ui, color);
             ui.colored_label(color, state).on_hover_text(format!("{:?} · {}", tab.endpoint.state(), workbench_ui::framing(&tab.settings)));
             if ui.max_rect().width() >= 450.0 { ui.label(RichText::new(if tab.endpoint.read_only() { "Read-only replay source".into() } else { workbench_ui::framing(&tab.settings) }).small().color(theme::MUTED)); }
+            if let Some(network)=tab.endpoint.network() {
+                let (local,peer)=network.addresses();
+                ui.small(format!("Local {} · peer {}",local.map(|a|a.to_string()).unwrap_or_else(||"pending".into()),peer.map(|a|a.to_string()).unwrap_or_else(||"none".into())));
+            }
             if let Some(framing)=tab.link_framing { ui.small(format!("Emulated link · {}",framing.label())); }
-            if !tab.endpoint.read_only() && ui.selectable_label(tab.show_settings, "Settings").clicked() { tab.show_settings = !tab.show_settings; }
+            if !signal_forge::network::is_uri(&tab.settings.path) && !tab.endpoint.read_only() && ui.selectable_label(tab.show_settings, "Settings").clicked() { tab.show_settings = !tab.show_settings; }
                 if ui.max_rect().width() >= 450.0 { ui.add_space((ui.available_size_before_wrap().x - 104.0 - ui.spacing().item_spacing.x).max(0.0)); }
                 if ui
                     .add(
@@ -282,6 +289,37 @@ impl TerminalViewer<'_> {
                     }
                 }
         });
+        if let Some(network) = tab.endpoint.network().filter(|n| n.is_udp()) {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("UDP send / reply target IP:port");
+                theme::control(
+                    ui,
+                    "UDP reply target",
+                    egui::TextEdit::singleline(&mut tab.udp_reply).desired_width(180.0),
+                );
+                if theme::button(ui, "Set UDP target").clicked() {
+                    match tab
+                        .udp_reply
+                        .parse()
+                        .map_err(|_| "Enter an IP:port (IPv6: [::1]:5000)".to_owned())
+                        .and_then(|peer| network.set_peer(peer).map_err(|e| e.to_string()))
+                    {
+                        Ok(()) => {
+                            if let Ok(mut config) =
+                                signal_forge_network::Config::parse(&tab.settings.path)
+                            {
+                                if let Some(peer) = network.addresses().1 {
+                                    config.reply = Some(peer);
+                                    tab.settings.path = config.uri();
+                                }
+                            }
+                            tab.error = None;
+                        }
+                        Err(error) => tab.error = Some(error),
+                    }
+                }
+            });
+        }
     }
 
     pub(super) fn traffic_canvas(&mut self, ui: &mut egui::Ui, tab: &mut Terminal) {
@@ -506,7 +544,7 @@ impl TerminalViewer<'_> {
             ),
             0.0,
             egui::TextFormat {
-                font_id: font,
+                font_id: font.clone(),
                 color: if direction == Direction::Rx {
                     theme::TEXT
                 } else {
@@ -515,6 +553,22 @@ impl TerminalViewer<'_> {
                 ..Default::default()
             },
         );
+        let packet_label = tab.packet_label(index);
+        if !packet_label.is_empty() {
+            text.append(
+                &format!(
+                    "  [{}{}]",
+                    if bytes.is_empty() { "empty · " } else { "" },
+                    packet_label
+                ),
+                0.0,
+                egui::TextFormat {
+                    font_id: font,
+                    color: theme::MUTED,
+                    ..Default::default()
+                },
+            );
+        }
         if let Some(row) = cached {
             use signal_forge::traffic_analysis::duration_text;
             let mut annotations = Vec::new();
@@ -829,6 +883,7 @@ impl TerminalViewer<'_> {
                     })
                     .hint_text("Payload · Enter sends · Up recalls"),
             );
+            theme::trace_control(&input, &format!("{}:Payload editor", tab.endpoint.id().0));
             // Process text events before recall so a draft includes every character
             // entered in this frame. The navigation key itself was consumed above.
             if input.changed() {
@@ -1303,6 +1358,7 @@ mod timing_hover_tests {
                     .collect::<String>()
                     .into_bytes(),
             ),
+            network: None,
         }));
         let ctx = egui::Context::default();
         let bus = TrafficBus::default();
@@ -1463,6 +1519,7 @@ mod timing_hover_tests {
                 endpoint: tab.endpoint.id().clone(),
                 direction,
                 bytes: Arc::from(bytes),
+                network: None,
             }));
         }
         tab.analysis = ViewSettings {
@@ -1515,6 +1572,7 @@ mod timing_hover_tests {
                     .collect::<String>()
                     .into_bytes(),
             ),
+            network: None,
         }));
         tab.analysis.search = Pattern {
             mode: PatternMode::Regex,
@@ -1583,6 +1641,7 @@ mod timing_hover_tests {
             endpoint: tab.endpoint.id().clone(),
             direction: Direction::Rx,
             bytes: Arc::from(b"HELLO\n".as_slice()),
+            network: None,
         }));
         let ctx = egui::Context::default();
         ctx.style_mut(|style| style.interaction.tooltip_delay = 0.0);
@@ -1623,6 +1682,7 @@ mod timing_hover_tests {
             endpoint: tab.endpoint.id().clone(),
             direction: Direction::Tx,
             bytes: Arc::from(b"request".as_slice()),
+            network: None,
         }));
         // Reuse the hovered location for a TX row: it must have no RX tooltip.
         for time in [2.1, 2.2] {

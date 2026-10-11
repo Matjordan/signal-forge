@@ -399,3 +399,33 @@ If recording cannot start, check the parent directory and ordinary-user write ac
 Distinguish Raw binary, ASCII escaped text, Hex byte text, and structured JSONL capture. Match the file-send parser to the representation. For replay select the matching Raw, Hex, or JSONL format. Raw/Hex require synthetic chunk pacing; they cannot reproduce original timing. Recorded timestamps are event-level, not precise byte arrival times. Dropped monitor events, rolling-buffer limits, and missing finalization can limit completeness even if the file exists.
 
 Related: [Recording RX](#recording-rx), [Capture and replay files](#capture-and-replay-files), [Sessions](#sessions), [Timing and statistics](#timing-and-statistics).
+
+<!-- topic:network.setup -->
+## Network endpoints
+> Open TCP or UDP clients and listeners with Network; saved endpoints restore disconnected.
+
+Choose **Network…**, select TCP client, TCP listener, UDP client, or UDP listener, and enter the remote host or local bind address. Clients accept hostnames and IPv4/IPv6 addresses. Bind addresses must be numeric IP:port; write IPv6 binds as `[::1]:5000`. The terminal shows the actual local address and current peer. Wildcard addresses in packet metadata identify the bound socket; they do not infer which interface carried a packet. Port 0 chooses a free local port each time you reconnect.
+
+TCP clients connect asynchronously within the configured timeout. Disconnect cancels application work immediately; any OS lookup or connection attempt still in progress finishes in the background and its result is discarded. TCP listeners start in Listening, accept one active client, return to Listening when it disconnects, and can accept another client. Repeats, file sends, and bridges stop when the active client disconnects. TCP is a byte stream: reads can split or combine protocol messages.
+
+UDP clients send to the configured peer and can receive datagrams from other senders. UDP listeners receive from arbitrary peers. **UDP send / reply target IP:port** and **Set UDP target** choose an explicit destination; receiving traffic never changes it. Each send, preset send, repeat iteration, or file chunk produces one datagram, including an empty payload. File chunk size is therefore packet size; the last chunk may be shorter. The portable send limit is 65507 bytes.
+
+UDP traffic rows remain separate messages in every receive mode, even if a packet is empty or contains multiple line endings. Rows identify source and destination. Raw RX recording concatenates payload bytes only; use JSONL capture to retain packet boundaries and addresses. Capture version 1 has an optional `network` event field; older captures remain readable, and capture replay preserves this metadata and empty packets. Triggered post-byte limits retain the entire final datagram, so the byte count may exceed the requested limit by one packet.
+
+Network endpoints use ordinary-user sockets. Use a high port such as 5000. An address-in-use error means another socket owns the bind; permission errors require choosing an allowed address/port. Binding `0.0.0.0` or `[::]` makes the listener reachable on all interfaces; `127.0.0.1` and `::1` restrict it to this machine. UDP does not guarantee delivery or ordering. Network terminals show observed timing; UART wire-time calculations are unavailable.
+
+Related: [Network bridge framing](#network-bridge-framing), [Bridges](#bridges), [Recording RX](#recording-rx).
+
+<!-- topic:network.framing -->
+## Network bridge framing
+> Stream-to-UDP bridges default to complete LF-terminated lines; UDP-to-stream forwards payloads unchanged.
+
+Serial, SSH serial, and TCP endpoints are streams. A stream-to-UDP bridge must choose message boundaries. The default **Line** policy buffers until LF; `CMD1\r\nCMD2\r\n` becomes two packets containing `CMD1\r\n` and `CMD2\r\n`. **Strip LF / CRLF from datagrams** removes these endings; otherwise they are retained exactly. A blank line with stripping enabled sends an empty datagram.
+
+For binary protocols choose **Fixed byte count**. **Idle gap** sends buffered bytes after the selected quiet period. **Raw chunks (advanced)** sends one transport read per packet and depends on OS read boundaries. Incomplete lines and fixed packets are discarded when a bridge stops. Messages larger than the UDP payload limit stop the bridge with an error rather than silently splitting a packet.
+
+UDP-to-stream bridges write each received payload in receive order. Choose None, LF, CRLF, or CR to append an ending after each datagram; None preserves payloads unchanged. UDP-to-UDP bridges preserve packet boundaries and payloads. Destinations use their configured peer or explicit reply target.
+
+Bridge framing choices save in the workspace. Select the same endpoints and choose **Use saved framing** to restore them; loading a workspace never starts a listener, connection, bridge, or send automatically.
+
+Related: [Network endpoints](#network-endpoints), [Bridges](#bridges).
