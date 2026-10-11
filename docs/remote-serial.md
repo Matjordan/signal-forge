@@ -99,6 +99,8 @@ requires a hardware bench.
 
 ![Saved SSH hosts, available devices and an edited endpoint](remote-browser.png)
 
+**Local ports** appears above remote hosts and opens by default, even with terminals already open. It lists detected and recent local devices; select a device to review its settings before connecting.
+
 Saved hosts appear under **Remote hosts** in the sidebar. Expand a host to discover its ports asynchronously; **Refresh ports** repeats discovery without disturbing live terminals. The panel distinguishes discovery in progress, no ports found, and SSH/discovery errors with the underlying diagnostic.
 
 Stable `/dev/serial/by-id/*` paths are preferred. Their underlying tty path is shown as secondary information, and aliases of the same device are listed once. **Open** connects a listed device directly; **Focus open port** selects its existing terminal, including a terminal opened using its tty alias. Multiple hosts and multiple ports per host are supported. Browser results are refreshed after a host edit rather than reusing results from its old address.

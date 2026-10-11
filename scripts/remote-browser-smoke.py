@@ -13,7 +13,7 @@ import time
 import tty
 from gui_smoke_support import click_control, window_for
 
-pairs=[pty.openpty() for _ in range(3)]
+pairs=[pty.openpty() for _ in range(4)]
 for master,slave in pairs: tty.setraw(slave)
 paths=[os.ttyname(slave) for _,slave in pairs]
 alias='/dev/serial/by-id/fixture'
@@ -39,7 +39,7 @@ os.execvp('python3',['python3','-c',parts[2],json.dumps(settings)])
     uris=['ssh://old-address'+path for path in paths[:2]]
     tabs=[dict(settings=dict(path=uri,baud=19200,data_bits=8,parity='None',stop_bits=1,flow='None'),remote_host='Workshop') for uri in uris]
     workspace=config_root/'workspace.json'
-    workspace.write_text(json.dumps(dict(version=2,remote_hosts=[host,dict(name='Spare',connection=dict(host='empty',username=None,port=None))],ports=[tab['settings'] for tab in tabs],layout={'Split':dict(horizontal=True,fraction=.4,first={'Leaf':dict(tabs=[tabs[0]],active=0)},second={'Leaf':dict(tabs=[tabs[1]],active=0)})})))
+    workspace.write_text(json.dumps(dict(version=2,remote_hosts=[host,dict(name='Spare',connection=dict(host='empty',username=None,port=None))],ports=[tab['settings'] for tab in tabs]+[dict(path=paths[3],baud=19200,data_bits=8,parity='None',stop_bits=1,flow='None')],layout={'Split':dict(horizontal=True,fraction=.4,first={'Leaf':dict(tabs=[tabs[0]],active=0)},second={'Leaf':dict(tabs=[tabs[1]],active=0)})})))
     preset=dict(name='Fixed original target',payload='POLL',encoding='Text',escapes=True,ending='None',description='',shortcut='Ctrl+1',target={'Endpoint':'serial:'+uris[0]},repeat=None)
     preset_file=config_root/'presets.json';preset_file.write_text(json.dumps(dict(version=1,profiles=[dict(name='Remote',presets=[preset])])));preset_before=preset_file.read_bytes()
     calls=root/'calls.jsonl';log_path=root/'app.log'
@@ -73,6 +73,11 @@ os.execvp('python3',['python3','-c',parts[2],json.dumps(settings)])
             key('ctrl+s');assert len(terminals(json.loads(workspace.read_text())['layout']))==2
             click_control(window,log_path,'Refresh host Workshop')
             time.sleep(.4)
+            # Local ports remain visible with live terminals and an expanded remote host.
+            click_control(window,log_path,'Open local '+paths[3])
+            key('Escape') # Cancel local setup without opening or sending.
+            assert 'Opened '+paths[3] not in log_path.read_text(), 'Cancelled local setup opened a port'
+            assert not select.select([pairs[3][0]],[],[],.1)[0], 'Cancelled local setup sent bytes'
             key('Escape');key('ctrl+1');read(0,b'POLL') # Refresh preserves live endpoint.
             click_control(window,log_path,'Edit host Workshop')
             replace('Remote address','bad address')
@@ -118,7 +123,7 @@ os.execvp('python3',['python3','-c',parts[2],json.dumps(settings)])
             invoked=[json.loads(line) for line in calls.read_text().splitlines()]
             assert any(args[-2]=='new-address' and shlex.split(args[-1])[-1]=='discover-details' for args in invoked)
             assert any(args[-2]=='unavailable' and shlex.split(args[-1])[-1]!='discover-details' for args in invoked)
-            print('Async saved-host browsing/refresh, alias deduplication, shared host edits, stable IDs/preset targets, endpoint edits, persistence and failed-reconnect preservation passed.',flush=True)
+            print('Visible local ports, async saved-host browsing/refresh, alias deduplication, shared host edits, stable IDs/preset targets, endpoint edits, persistence and failed-reconnect preservation passed.',flush=True)
         except BaseException:
             print(log_path.read_text()[-5000:],flush=True)
             if window and process.poll() is None:subprocess.run(['import','-window',window,'/tmp/signal-forge-remote-browser-failure.png'],check=False)
