@@ -37,6 +37,7 @@ fn host() -> SshHost {
         host: std::env::var("SIGNAL_FORGE_TEST_SSH_HOST").unwrap(),
         username: None,
         port: None,
+        identity_file: None,
     }
 }
 fn ready(endpoint: &dyn Endpoint) {
@@ -359,6 +360,7 @@ fn ssh_handshake_timeout_and_discovery_cancellation_are_bounded() {
         host: "127.0.0.1".into(),
         username: None,
         port: Some(listener.local_addr().unwrap().port()),
+        identity_file: None,
     };
     let started = Instant::now();
     let endpoint = SshSerialEndpoint::open(
@@ -390,4 +392,53 @@ fn ssh_handshake_timeout_and_discovery_cancellation_are_bounded() {
         "{:?}",
         endpoint.state()
     );
+}
+
+#[test]
+#[ignore = "real SSH fixture: python3 scripts/test-remote-serial.py"]
+fn identified_endpoint_uses_saved_key_and_preserves_traffic_identity() {
+    let config_path = std::env::var("SIGNAL_FORGE_TEST_SSH_CONFIG").unwrap();
+    let original = std::fs::read_to_string(&config_path).unwrap();
+    let without_key = original
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("IdentityFile "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(
+        &config_path,
+        format!("{without_key}\n  IdentityFile none\n"),
+    )
+    .unwrap();
+    let mut connection = host();
+    connection.identity_file = Some(std::env::var("SIGNAL_FORGE_TEST_CLIENT_KEY").unwrap());
+    let bus = TrafficBus::default();
+    let events = bus.subscribe(16);
+    let (mut master, path, _slave) = pty();
+    let id = signal_forge::endpoint::EndpointId("serial:ssh://original-address/device".into());
+    let mut endpoint = SshSerialEndpoint::open_identified(
+        &SerialSettings {
+            path: connection.uri(&path),
+            ..Default::default()
+        },
+        bus,
+        id.clone(),
+        connection,
+    )
+    .unwrap();
+    ready(&endpoint);
+    assert_eq!(endpoint.id(), &id);
+    endpoint.send(b"KEY".to_vec()).unwrap();
+    read(&mut master, b"KEY");
+    master.write_all(b"RX").unwrap();
+    let mut received = Vec::new();
+    while received.len() < 2 {
+        let event = events.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(event.endpoint, id);
+        if event.direction == Direction::Rx {
+            received.extend_from_slice(&event.bytes);
+        }
+    }
+    assert_eq!(received, b"RX");
+    endpoint.disconnect();
+    std::fs::write(config_path, original).unwrap();
 }

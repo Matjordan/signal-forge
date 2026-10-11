@@ -40,7 +40,7 @@ impl BaudControl {
             *self = Self::new(*baud);
         }
         ui.label("Baud");
-        egui::ComboBox::from_id_salt("baud")
+        let response = egui::ComboBox::from_id_salt("baud")
             .width(75.0)
             .selected_text(if self.custom {
                 match Self::parse(&self.text) {
@@ -52,10 +52,12 @@ impl BaudControl {
             })
             .show_ui(ui, |ui| {
                 for &rate in COMMON_BAUD_RATES {
-                    if ui
-                        .selectable_label(!self.custom && *baud == rate, rate.to_string())
-                        .clicked()
-                    {
+                    let option = theme::control(
+                        ui,
+                        &format!("Baud {rate}"),
+                        egui::SelectableLabel::new(!self.custom && *baud == rate, rate.to_string()),
+                    );
+                    if option.clicked() {
                         *baud = rate;
                         *self = Self::new(rate);
                     }
@@ -64,6 +66,7 @@ impl BaudControl {
                     self.custom = true;
                 }
             });
+        theme::trace_control(&response.response, "Baud options");
         if self.custom {
             ui.add(
                 egui::TextEdit::singleline(&mut self.text)

@@ -2,10 +2,10 @@ use super::*;
 use egui_dock::{Node, Surface, SurfaceIndex, TabIndex};
 use signal_forge::workspace::{Layout, SavedTerminal, SavedWindow};
 
-struct RestoredEndpoint {
-    id: EndpointId,
-    path: String,
-    name: String,
+pub(super) struct RestoredEndpoint {
+    pub(super) id: EndpointId,
+    pub(super) path: String,
+    pub(super) name: String,
 }
 impl Endpoint for RestoredEndpoint {
     fn read_only(&self) -> bool {
@@ -35,6 +35,11 @@ impl Terminal {
     pub(super) fn saved(&self) -> SavedTerminal {
         SavedTerminal {
             settings: self.settings.clone(),
+            endpoint_id: (*self.endpoint.id()
+                != EndpointId(format!("serial:{}", self.settings.path)))
+            .then(|| self.endpoint.id().0.clone()),
+            remote_host: self.remote_host.clone(),
+            display_name: self.display_name.clone(),
             hex: self.receive_mode == ReceiveMode::Hex,
             receive_mode: Some(self.receive_mode),
             delimiter: self.lines.delimiter,
@@ -50,7 +55,12 @@ impl Terminal {
     }
     pub(super) fn restored(saved: &SavedTerminal) -> Self {
         let endpoint = RestoredEndpoint {
-            id: EndpointId(format!("serial:{}", saved.settings.path)),
+            id: EndpointId(
+                saved
+                    .endpoint_id
+                    .clone()
+                    .unwrap_or_else(|| format!("serial:{}", saved.settings.path)),
+            ),
             path: saved.settings.path.clone(),
             name: if let Ok(config) =
                 signal_forge::replay::ReplayConfig::parse(&saved.settings.path)
@@ -71,6 +81,8 @@ impl Terminal {
         tab.analysis = saved.analysis.clone();
         tab.show_controls = saved.show_controls;
         tab.auto_scroll = saved.auto_scroll;
+        tab.remote_host = saved.remote_host.clone();
+        tab.display_name = saved.display_name.clone();
         tab.encoding = saved.encoding;
         tab.escapes = saved.escapes;
         tab.ending = saved.ending;
@@ -161,11 +173,25 @@ impl Workbench {
                     .position(|profile| &profile.name == name)
             })
             .unwrap_or(0);
-        self.selected = self
-            .config
-            .selected
-            .as_ref()
-            .map(|path| EndpointId(format!("serial:{path}")));
+        for (_, tab) in self.dock.iter_all_tabs_mut() {
+            let host = self.config.remote_hosts.iter().find(|host| {
+                tab.remote_host.as_deref() == Some(&host.name)
+                    || tab.remote_host.is_none()
+                        && signal_forge::ssh_serial::SshHost::parse(&tab.settings.path).is_ok_and(
+                            |(_, device)| host.connection.uri(&device) == tab.settings.path,
+                        )
+            });
+            if let Some(host) = host {
+                tab.remote_host = Some(host.name.clone());
+                tab.ssh_connection = Some(host.connection.clone());
+            }
+        }
+        self.selected = self.config.selected.as_ref().and_then(|path| {
+            self.dock
+                .iter_all_tabs()
+                .find(|(_, tab)| &tab.settings.path == path)
+                .map(|(_, tab)| tab.endpoint.id().clone())
+        });
     }
     pub(super) fn snapshot_workspace(&mut self) {
         for (_, tab) in self.dock.iter_all_tabs() {
@@ -285,7 +311,7 @@ impl Workbench {
                         } else {
                             tab.stop_repeat();
                             tab.endpoint.disconnect();
-                            match signal_forge::endpoint::open(&tab.settings, self.bus.clone()) {
+                            match tab.open_endpoint(self.bus.clone()) {
                                 Ok(endpoint) => {
                                     tab.active_framing = SerialFraming::from(&tab.settings);
                                     tab.rx_gap = true;

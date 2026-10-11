@@ -71,18 +71,24 @@ impl Workbench {
                 }
             }
         }
-        let parsed = signal_forge::ssh_serial::SshHost::parse(&self.settings.path).ok();
+        let saved_host = self.connection_for(&self.settings.path);
+        let mut parsed = signal_forge::ssh_serial::SshHost::parse(&self.settings.path).ok();
+        if let (Some(saved), Some((host, _))) = (&saved_host, &mut parsed) {
+            *host = saved.connection.clone();
+        }
         self.setup = Some(SetupDialog {
             remote: parsed.is_some(),
-            host_name: parsed
+            host_name: saved_host
                 .as_ref()
-                .map(|p| p.0.host.clone())
+                .map(|host| host.name.clone())
+                .or_else(|| parsed.as_ref().map(|p| p.0.host.clone()))
                 .unwrap_or_default(),
             host: parsed.as_ref().map(|p| p.0.clone()).unwrap_or(
                 signal_forge::ssh_serial::SshHost {
                     host: String::new(),
                     username: None,
                     port: None,
+                    identity_file: None,
                 },
             ),
             device: parsed
@@ -208,7 +214,7 @@ impl Workbench {
             self.dock.push_to_focused_leaf(tab);
         }
     }
-    fn select_terminal(&mut self, id: EndpointId) {
+    pub(super) fn select_terminal(&mut self, id: EndpointId) {
         let location = self
             .dock
             .iter_all_tabs()
@@ -245,7 +251,7 @@ impl Workbench {
                             .map(|(_, tab)| {
                                 (
                                     tab.endpoint.id().clone(),
-                                    tab.endpoint.display_name().to_string(),
+                                    tab.label().to_string(),
                                     tab.endpoint.state(),
                                     if tab.endpoint.read_only() {
                                         "Read-only replay source".into()
@@ -277,8 +283,19 @@ impl Workbench {
                                     }
                                 });
                                 ui.label(RichText::new(summary).small().color(theme::MUTED));
+                                if id.0.starts_with("serial:ssh://")
+                                    && theme::control(
+                                        ui,
+                                        &format!("Edit endpoint {}", id.0),
+                                        egui::Button::new("Edit remote endpoint"),
+                                    )
+                                    .clicked()
+                                {
+                                    self.edit_remote_endpoint(id.clone());
+                                }
                             });
                         }
+                        self.remote_hosts_ui(ui);
                         if entries.is_empty() {
                             ui.weak("No open terminals");
                         }
@@ -422,9 +439,10 @@ impl Workbench {
                                 else if dialog.host_name.is_empty() || dialog.host_name.len() > 256 || dialog.host_name.contains(['\0', '\n', '\r']) {dialog.error = Some("Enter a valid display name".into());}
                                 else if self.config.remote_hosts.len() >= 128 && !self.config.remote_hosts.iter().any(|host| host.name == dialog.host_name) {dialog.error = Some("At most 128 SSH hosts can be saved".into());}
                                 else {
-                                    self.config.remote_hosts.retain(|host| host.name != dialog.host_name);
-                                    self.config.remote_hosts.push(signal_forge::ssh_serial::SavedSshHost {name: dialog.host_name.clone(), connection: dialog.host.clone()});
-                                    self.save_workspace(); dialog.error = self.error.clone();
+                                    let replacement=signal_forge::ssh_serial::SavedSshHost {name: dialog.host_name.clone(), connection: dialog.host.clone()};
+                                    if self.config.remote_hosts.iter().any(|host|host.name==dialog.host_name) {self.apply_host_edit(&dialog.host_name, replacement);}
+                                    else {self.config.remote_hosts.push(replacement);self.save_workspace();}
+                                    dialog.error = self.error.clone();
                                 }
                             }
                             if ui.button("Remove saved host").clicked() {
@@ -432,13 +450,14 @@ impl Workbench {
                             }
                         });
                         ui.weak("Uses SSH keys/agent and strict known-host verification. Remote host needs Python 3.");
+                        ui.weak("Updating a saved host disconnects linked endpoints; history/drafts stay. Reconnect explicitly.");
                         if ui.add_enabled(dialog.discovery.is_none(), egui::Button::new("Discover remote devices")).clicked() {
                             dialog.discovery = Some(signal_forge::ssh_serial::Discovery::start(dialog.host.clone()));
                         }
                         if let Some(rx) = &dialog.discovery {
                             if let Some(result) = rx.try_result() {
                                 dialog.discovery = None;
-                                match result {Ok(paths) => {dialog.devices = paths; dialog.error = None;}, Err(e) => dialog.error = Some(e)}
+                                match result {Ok(paths) => {dialog.devices = paths.into_iter().map(|device| device.path).collect(); dialog.error = None;}, Err(e) => dialog.error = Some(e)}
                             } else {ui.label("Connecting / discovering…"); ctx.request_repaint_after(Duration::from_millis(100));}
                         }
                         egui::ComboBox::from_id_salt("remote-devices").selected_text("Discovered devices").show_ui(ui, |ui| {
@@ -591,9 +610,17 @@ impl Workbench {
     }
 }
 
-fn serial_form(ui: &mut egui::Ui, settings: &mut SerialSettings, baud: &mut BaudControl) {
+pub(super) fn serial_form(
+    ui: &mut egui::Ui,
+    settings: &mut SerialSettings,
+    baud: &mut BaudControl,
+) {
     ui.label("Device path");
-    ui.text_edit_singleline(&mut settings.path);
+    theme::control(
+        ui,
+        "Remote device path",
+        egui::TextEdit::singleline(&mut settings.path),
+    );
     ui.weak("Serial device or existing /dev/pts/N path");
     ui.horizontal_wrapped(|ui| baud.ui(ui, &mut settings.baud));
     ui.horizontal_wrapped(|ui| {

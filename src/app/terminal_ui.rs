@@ -258,7 +258,7 @@ impl TerminalViewer<'_> {
                         tab.error = Some(error.into());
                     } else {
                         tab.endpoint.disconnect();
-                        match signal_forge::endpoint::open(&tab.settings, self.bus.clone()) {
+                        match tab.open_endpoint(self.bus.clone()) {
                             Ok(endpoint) => {
                                 tab.active_framing = SerialFraming::from(&tab.settings);
                                 tab.rx_gap = true;

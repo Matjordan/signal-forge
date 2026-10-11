@@ -35,3 +35,5 @@ pub mod triggered_capture;
 pub mod session;
 
 pub mod selection_inspector;
+
+pub mod remote_config;

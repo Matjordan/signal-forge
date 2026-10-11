@@ -123,6 +123,36 @@ impl WorkspaceConfig {
         for port in &self.ports {
             port.validate()?;
         }
+        fn identities(
+            layout: &crate::workspace::Layout,
+            ids: &mut std::collections::HashSet<String>,
+        ) -> Result<(), String> {
+            match layout {
+                crate::workspace::Layout::Leaf { tabs, .. } => {
+                    for tab in tabs {
+                        if !ids.insert(
+                            tab.endpoint_id
+                                .clone()
+                                .unwrap_or_else(|| format!("serial:{}", tab.settings.path)),
+                        ) {
+                            return Err("Duplicate terminal identity".into());
+                        }
+                    }
+                }
+                crate::workspace::Layout::Split { first, second, .. } => {
+                    identities(first, ids)?;
+                    identities(second, ids)?;
+                }
+            }
+            Ok(())
+        }
+        let mut ids = std::collections::HashSet::new();
+        if let Some(layout) = &self.layout {
+            identities(layout, &mut ids)?;
+        }
+        for window in &self.windows {
+            identities(&window.layout, &mut ids)?;
+        }
         let mut paths = std::collections::HashSet::new();
         if let Some(layout) = &self.layout {
             layout.validate(0, &mut paths)?;

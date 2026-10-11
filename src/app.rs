@@ -8,6 +8,7 @@ use baud_ui::BaudControl;
 
 mod connection_ui;
 mod preset_ui;
+mod remote_ui;
 mod terminal_ui;
 mod theme;
 mod update_ui;
@@ -38,6 +39,9 @@ const HISTORY_LIMIT: usize = 2000;
 struct Terminal {
     endpoint: Box<dyn Endpoint>,
     settings: SerialSettings,
+    remote_host: Option<String>,
+    ssh_connection: Option<signal_forge::ssh_serial::SshHost>,
+    display_name: Option<String>,
     baud_control: BaudControl,
     show_settings: bool,
     tool: terminal_ui::TerminalTool,
@@ -52,6 +56,7 @@ struct Terminal {
     active_framing: SerialFraming,
     link_framing: Option<SerialFraming>,
     rx_gap: bool,
+    preserve_rx_gap: bool,
     rx_breaks: std::collections::HashSet<u64>,
     paused: bool,
     auto_scroll: bool,
@@ -103,6 +108,7 @@ impl Terminal {
             inspector_dismissed: None,
             inspection_cache: None,
             rx_gap: false,
+            preserve_rx_gap: false,
             rx_breaks: std::collections::HashSet::new(),
             paused: false,
             auto_scroll: true,
@@ -114,6 +120,9 @@ impl Terminal {
             selection: Default::default(),
             receive_mode: ReceiveMode::Line,
             lines: LineDisplay::default(),
+            ssh_connection: None,
+            remote_host: None,
+            display_name: None,
             input: String::new(),
             send_history: SendHistory::default(),
             encoding: Encoding::Text,
@@ -165,7 +174,10 @@ impl Terminal {
                 self.selection.clear();
             }
             self.lines.discard_pending();
-            self.rx_breaks.insert(event.sequence);
+            if !self.preserve_rx_gap {
+                self.rx_breaks.insert(event.sequence);
+            }
+            self.preserve_rx_gap = false;
             self.rx_gap = false;
         }
         self.history_origins
@@ -197,6 +209,12 @@ impl Terminal {
         {
             if self.rx_breaks.contains(&event.sequence) {
                 self.lines.discard_pending();
+            } else if index > 0
+                && epochs
+                    .get(index)
+                    .is_some_and(|epoch| *epoch != self.lines.epoch)
+            {
+                self.lines.seal_pending();
             }
             self.lines.epoch = epochs.get(index).copied().unwrap_or(self.lines.epoch);
             self.history_origins
@@ -301,7 +319,7 @@ struct TerminalViewer<'a> {
 impl TabViewer for TerminalViewer<'_> {
     type Tab = Terminal;
     fn title(&mut self, tab: &mut Terminal) -> egui::WidgetText {
-        RichText::new(format!("    {}", tab.endpoint.display_name()))
+        RichText::new(format!("    {}", tab.label()))
             .color(theme::TEXT)
             .into()
     }
@@ -380,6 +398,8 @@ impl TabViewer for TerminalViewer<'_> {
 }
 
 pub struct Workbench {
+    remote_browser: std::collections::HashMap<String, remote_ui::HostBrowser>,
+    remote_edit: Option<remote_ui::RemoteEdit>,
     session: Option<signal_forge::session::Session>,
     session_ui: session_ui::SessionUi,
     pending_artifacts: Vec<(std::path::PathBuf, signal_forge::session::ArtifactKind)>,
@@ -450,6 +470,8 @@ impl Workbench {
             preset_library_open: false,
             active_bridge: 0,
             pairs: Vec::new(),
+            remote_browser: Default::default(),
+            remote_edit: None,
             pair_name: "bench".into(),
             pair_emulated: false,
             pair_framing: SerialSettings::default(),
@@ -505,21 +527,23 @@ impl Workbench {
     /// A focused traffic canvas accepts selection/copy keys, not text editing.
     /// Keep normal workbench shortcuts available without enabling them in editors.
     fn keyboard_editing(&self, ctx: &egui::Context) -> bool {
-        ctx.wants_keyboard_input()
-            && !ctx.memory(|memory| {
-                self.dock.iter_all_tabs().any(|(_, tab)| {
-                    memory.has_focus(egui::Id::new((
-                        "traffic-selection-focus",
-                        tab.endpoint.id().clone(),
-                    )))
+        self.remote_edit.is_some()
+            || ctx.wants_keyboard_input()
+                && !ctx.memory(|memory| {
+                    self.dock.iter_all_tabs().any(|(_, tab)| {
+                        memory.has_focus(egui::Id::new((
+                            "traffic-selection-focus",
+                            tab.endpoint.id().clone(),
+                        )))
+                    })
                 })
-            })
     }
     fn connect(&mut self) {
         if let Err(error) = self.baud_control.validate() {
             self.error = Some(error.into());
             return;
         }
+        let saved_host = self.connection_for(&self.settings.path);
         if let Some((_, tab)) = self
             .dock
             .iter_all_tabs_mut()
@@ -532,10 +556,14 @@ impl Workbench {
                 self.error = Some(format!("{} already connected", self.settings.path));
                 return;
             }
+            if let Some(host) = saved_host {
+                tab.remote_host = Some(host.name);
+                tab.ssh_connection = Some(host.connection);
+            }
             tab.settings = self.settings.clone();
             tab.baud_control = BaudControl::new(tab.settings.baud);
             tab.endpoint.disconnect();
-            match signal_forge::endpoint::open(&tab.settings, self.bus.clone()) {
+            match tab.open_endpoint(self.bus.clone()) {
                 Ok(endpoint) => {
                     tab.endpoint = endpoint;
                     tab.error = None;
@@ -546,12 +574,42 @@ impl Workbench {
             }
             return;
         }
-        match signal_forge::endpoint::open(&self.settings, self.bus.clone()) {
+        let host = self.connection_for(&self.settings.path);
+        let connection = host
+            .as_ref()
+            .map(|host| host.connection.clone())
+            .or_else(|| {
+                signal_forge::ssh_serial::SshHost::parse(&self.settings.path)
+                    .ok()
+                    .map(|(host, _)| host)
+            });
+        let opened = if let Some(connection) = connection {
+            let ids = self
+                .dock
+                .iter_all_tabs()
+                .map(|(_, tab)| tab.endpoint.id().clone())
+                .collect::<Vec<_>>();
+            let id = signal_forge::remote_config::available_endpoint_id(&self.settings.path, &ids);
+            signal_forge::ssh_serial::SshSerialEndpoint::open_identified(
+                &self.settings,
+                self.bus.clone(),
+                id,
+                connection,
+            )
+            .map(|endpoint| Box::new(endpoint) as Box<dyn Endpoint>)
+        } else {
+            signal_forge::endpoint::open(&self.settings, self.bus.clone())
+        };
+        match opened {
             Ok(endpoint) => {
                 self.config.ports.retain(|s| s.path != self.settings.path);
                 self.config.ports.push(self.settings.clone());
                 self.selected = Some(endpoint.id().clone());
                 let mut tab = Terminal::new(endpoint, self.settings.clone());
+                if let Some(host) = host {
+                    tab.remote_host = Some(host.name);
+                    tab.ssh_connection = Some(host.connection);
+                }
                 if let Some(session) = &self.session {
                     let index = self.dock.iter_all_tabs().count() + 1;
                     tab.recording_path = session
@@ -735,6 +793,7 @@ impl eframe::App for Workbench {
         }
         self.preset_library_ui(ctx);
         self.setup_dialog_ui(ctx);
+        self.remote_editor(ctx);
         self.update_prompt(ctx);
         self.collect_session_artifacts();
     }

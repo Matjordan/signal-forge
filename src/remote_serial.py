@@ -7,10 +7,17 @@ import sys
 import termios
 
 try:
-    if sys.argv[1] == 'discover':
+    if sys.argv[1] in ('discover', 'discover-details'):
         paths = sorted(set(glob.glob('/dev/serial/by-id/*'))) + sorted(set(
             glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*') + glob.glob('/dev/ttyS*')))
-        print(json.dumps(paths))
+        devices = []
+        seen = set()
+        for path in paths:
+            target = os.path.realpath(path)
+            if target not in seen:
+                seen.add(target)
+                devices.append(dict(path=path, target=target))
+        print(json.dumps(devices if sys.argv[1] == 'discover-details' else [item['path'] for item in devices]))
         sys.exit(0)
     settings = json.loads(sys.argv[1])
     try:

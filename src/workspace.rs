@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct SavedTerminal {
     pub settings: SerialSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     /// Compatibility flag for workspaces predating receive_mode.
     pub hex: bool,
     #[serde(default)]
@@ -28,6 +34,9 @@ impl Default for SavedTerminal {
     fn default() -> Self {
         Self {
             settings: SerialSettings::default(),
+            endpoint_id: None,
+            remote_host: None,
+            display_name: None,
             hex: false,
             receive_mode: Some(crate::terminal_display::ReceiveMode::Line),
             delimiter: crate::terminal_display::LineDelimiter::Auto,
@@ -77,6 +86,18 @@ impl Layout {
                 }
                 for tab in tabs {
                     tab.settings.validate()?;
+                    if tab.endpoint_id.as_ref().is_some_and(|id| {
+                        id.is_empty() || id.len() > 8192 || id.contains(['\0', '\n', '\r'])
+                    }) || tab.remote_host.as_ref().is_some_and(|name| {
+                        name.is_empty() || name.len() > 256 || name.contains(['\0', '\n', '\r'])
+                    }) || tab
+                        .display_name
+                        .as_ref()
+                        .is_some_and(|name| name.len() > 256 || name.contains(['\0', '\n', '\r']))
+                    {
+                        return Err("Invalid terminal identity or display name".into());
+                    }
+
                     if !paths.insert(tab.settings.path.clone()) {
                         return Err(format!("Duplicate terminal {}", tab.settings.path));
                     }
