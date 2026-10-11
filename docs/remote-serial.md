@@ -4,7 +4,7 @@ Open **New Port**, enable **Remote serial over SSH**, and enter a host or an SSH
 config alias. Username and port are optional: leave them blank/zero to use your
 normal SSH configuration. Give the host a display name and click **Save host** to
 reuse it; **Remove saved host** removes the saved definition. Host definitions
-contain only names, username and port, never passwords or private keys.
+contain names, connection settings and optionally a key file path, never passwords or private key contents.
 
 Click **Discover remote devices** to connect and list `/dev/serial/by-id/*`,
 `/dev/ttyUSB*`, `/dev/ttyACM*` and `/dev/ttyS*`. Stable by-id paths appear first.
@@ -94,3 +94,21 @@ A real GUI test verifies remote sends/presets and disconnected workspace restore
 CI invokes this suite separately; its Rust SSH fixture test is explicitly ignored
 in ordinary `cargo test` runs. Physical electrical parity/flow behavior still
 requires a hardware bench.
+
+## Saved-host browser
+
+![Saved SSH hosts, available devices and an edited endpoint](remote-browser.png)
+
+Saved hosts appear under **Remote hosts** in the sidebar. Expand a host to discover its ports asynchronously; **Refresh ports** repeats discovery without disturbing live terminals. The panel distinguishes discovery in progress, no ports found, and SSH/discovery errors with the underlying diagnostic.
+
+Stable `/dev/serial/by-id/*` paths are preferred. Their underlying tty path is shown as secondary information, and aliases of the same device are listed once. **Open** connects a listed device directly; **Focus open port** selects its existing terminal, including a terminal opened using its tty alias. Multiple hosts and multiple ports per host are supported. Browser results are refreshed after a host edit rather than reusing results from its old address.
+
+## Editing hosts and endpoints
+
+Use **Edit Host** in the browser to change the friendly host name, hostname/IPv4 address/SSH config alias, username, port, or optional identity-file path. Blank user/zero port/blank identity path use the normal OpenSSH configuration and agent. The saved definition contains only configuration and a key file path, never passwords or key contents. Use an SSH config alias to manage jump hosts, IPv6 destinations, known-hosts files or other advanced SSH settings.
+
+Use **Edit remote endpoint** on an endpoint card to change its friendly display name, device path and serial framing. Host address/authentication settings are shared; editing them in **Edit Host** updates every linked endpoint. Existing URI-only workspace terminals are associated with matching saved hosts automatically.
+
+**Save and disconnect** validates and writes configuration before disconnecting affected endpoints. Active transfers/repeats/bridges stop. Terminal drafts, traffic history (including an unfinished RX line), dock/floating-window placement and preset targets remain intact. Data on opposite sides of a changed connection is kept separate. Reconnect explicitly to use the saved settings; applying edits never sends or automatically reconnects. Failed connection attempts retain the saved configuration so it can be corrected in place.
+
+Endpoint identity remains stable across address/device changes and restarts. Older path-derived IDs may therefore contain the original address; that ID is a reference used by presets/captures, not the current connection target. Labels and connection settings show the current address. Browser results are transient; saved hosts, endpoint settings, friendly names and stable references persist in the workspace.

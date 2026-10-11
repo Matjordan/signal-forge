@@ -228,6 +228,13 @@ impl LineDisplay {
         self.previous_source = None;
         self.epoch += 1;
     }
+    /// Retain a partial line at a connection boundary without inventing a terminator.
+    pub fn seal_pending(&mut self) {
+        if let Some(row) = self.pending.take() {
+            self.push(row);
+        }
+        self.discard_pending();
+    }
     pub fn next_offset(&self, direction: Direction) -> u64 {
         self.offsets[usize::from(direction == Direction::Tx)]
     }

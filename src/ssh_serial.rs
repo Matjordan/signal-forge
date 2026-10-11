@@ -25,6 +25,8 @@ pub struct SshHost {
     pub host: String,
     pub username: Option<String>,
     pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_file: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedSshHost {
@@ -54,6 +56,7 @@ impl SshHost {
             host,
             username,
             port,
+            identity_file: None,
         };
         result.validate()?;
         let device = format!("/{device}");
@@ -72,6 +75,10 @@ impl SshHost {
         };
         if !valid(&self.host)
             || self.username.as_ref().is_some_and(|s| !valid(s))
+            || self
+                .identity_file
+                .as_ref()
+                .is_some_and(|p| p.is_empty() || p.len() > 4096 || p.contains(['\0', '\n', '\r']))
             || self.port == Some(0)
         {
             return Err(error("Invalid SSH host, username or port"));
@@ -120,6 +127,9 @@ impl SshHost {
         if let Some(port) = self.port {
             command.args(["-p", &port.to_string()]);
         }
+        if let Some(path) = &self.identity_file {
+            command.args(["-i", path]);
+        }
         command.arg(&self.host).arg(format!(
             "python3 -c {} {}",
             quote(include_str!("remote_serial.py")),
@@ -155,8 +165,22 @@ pub struct SshSerialEndpoint {
 }
 impl SshSerialEndpoint {
     pub fn open(settings: &SerialSettings, bus: TrafficBus) -> Result<Self, EndpointError> {
+        let (host, _) = SshHost::parse(&settings.path)?;
+        Self::open_identified(
+            settings,
+            bus,
+            EndpointId(format!("serial:{}", settings.path)),
+            host,
+        )
+    }
+    pub fn open_identified(
+        settings: &SerialSettings,
+        bus: TrafficBus,
+        id: EndpointId,
+        host: SshHost,
+    ) -> Result<Self, EndpointError> {
         settings.validate().map_err(error)?;
-        let (host, device) = SshHost::parse(&settings.path)?;
+        let (_, device) = SshHost::parse(&settings.path)?;
         let mut remote = settings.clone();
         remote.path = device;
         let argument = serde_json::to_string(&remote).map_err(|e| error(e.to_string()))?;
@@ -174,13 +198,7 @@ impl SshSerialEndpoint {
             nonblocking(&stdin)?;
             nonblocking(&stdout)?;
             nonblocking(&stderr)?;
-            let inner = SerialEndpoint::from_io(
-                EndpointId(format!("serial:{}", settings.path)),
-                settings.path.clone(),
-                stdout,
-                stdin,
-                bus,
-            )?;
+            let inner = SerialEndpoint::from_io(id, settings.path.clone(), stdout, stdin, bus)?;
             Ok::<_, EndpointError>((inner, stderr))
         })();
         let (inner, mut stderr) = match prepare {
@@ -346,10 +364,17 @@ impl Drop for SshSerialEndpoint {
 
 pub fn discover(host: &SshHost) -> Result<Vec<String>, EndpointError> {
     discover_cancellable(host, &AtomicBool::new(false))
+        .map(|devices| devices.into_iter().map(|device| device.path).collect())
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RemoteDevice {
+    pub path: String,
+    pub target: String,
 }
 
 pub struct Discovery {
-    receiver: std::sync::mpsc::Receiver<Result<Vec<String>, String>>,
+    receiver: std::sync::mpsc::Receiver<Result<Vec<RemoteDevice>, String>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -367,7 +392,7 @@ impl Discovery {
             worker: Some(worker),
         }
     }
-    pub fn try_result(&self) -> Option<Result<Vec<String>, String>> {
+    pub fn try_result(&self) -> Option<Result<Vec<RemoteDevice>, String>> {
         match self.receiver.try_recv() {
             Ok(result) => Some(result),
             Err(std::sync::mpsc::TryRecvError::Empty) => None,
@@ -386,9 +411,12 @@ impl Drop for Discovery {
     }
 }
 
-fn discover_cancellable(host: &SshHost, stop: &AtomicBool) -> Result<Vec<String>, EndpointError> {
+fn discover_cancellable(
+    host: &SshHost,
+    stop: &AtomicBool,
+) -> Result<Vec<RemoteDevice>, EndpointError> {
     let mut child = host
-        .command("discover")?
+        .command("discover-details")?
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -434,12 +462,13 @@ fn discover_cancellable(host: &SshHost, stop: &AtomicBool) -> Result<Vec<String>
                         String::from_utf8_lossy(&diagnostic)
                     )));
                 }
-                let paths: Vec<String> = serde_json::from_slice(&output)
+                let paths: Vec<RemoteDevice> = serde_json::from_slice(&output)
                     .map_err(|e| error(format!("Remote discovery response: {e}")))?;
-                if paths
-                    .iter()
-                    .any(|p| !p.starts_with("/dev/") || p.contains(['\0', '\n', '\r']))
-                {
+                if paths.iter().any(|p| {
+                    [&p.path, &p.target]
+                        .iter()
+                        .any(|v| !v.starts_with("/dev/") || v.contains(['\0', '\n', '\r']))
+                }) {
                     return Err(error("Invalid remote device path"));
                 }
                 return Ok(paths);

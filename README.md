@@ -48,6 +48,8 @@ Each terminal retains up to 2,000 raw events and 2,000 completed Line/TX rows, p
 
 ## Remote serial
 
+Saved SSH hosts have an asynchronous sidebar port browser with direct Open/Refresh and Edit Host actions. Remote endpoint cards offer in-place editing; address/device changes preserve terminal identity and preset references. See [remote browsing and editing](docs/remote-serial.md#saved-host-browser).
+
 Open **New Port**, enable **Remote serial over SSH**, and use an SSH host/config
 alias with your existing keys or agent. Discover remote Linux devices or enter a
 device path, choose serial framing, and open it as a normal endpoint. Host-key
