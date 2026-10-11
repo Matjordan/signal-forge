@@ -33,67 +33,13 @@ cargo build --release
 
 The executable is `target/release/signal-forge`. To explicitly open devices at launch, pass `--port /dev/ttyUSB0 --port /dev/ttyUSB1`. Your account needs read/write access to its serial devices; on many distributions this is provided by the `dialout` or `uucp` group. The application reports permission/open errors in its status bar.
 
-## Using the workbench
+## User guide and help
 
-1. Click **New Port** in the toolbar (or select an available/recent device in the sidebar), choose a device or type an existing `/dev/pts/N` path, and choose a standard baud rate from the dropdown (new connections default to **19200**), data bits, parity, stop bits, and flow control. **Custom…** allows other positive whole-number baud rates; saved baud settings remain unchanged.
-2. Confirm **Open port** to create a terminal. Cancel leaves existing connections unchanged. Opening a second device initially splits the workspace side-by-side. Drag tabs to dock and rearrange them; closing a tab disconnects its device. The compact pane header shows connection state and framing. Expand **Settings**, disconnect to edit, then reconnect. **2 Tiles** and **4 Tiles** rearrange live terminals without reopening devices; tabs remain draggable.
-3. Choose Text or Hex bytes in that terminal. Text optionally interprets `\r`, `\n`, `\t`, `\0`, `\xNN`, and `\\`. Hex accepts pairs of digits, optionally separated by whitespace, such as `00 FF 0D 0A`.
-4. Choose an explicit line ending: None, CR, LF, or CRLF. Click Send or press Enter in the payload input. Enter keeps the field focused so you can send again immediately. Press **Up** in that field to cycle through previously accepted commands, newest first; **Down** moves towards newer commands and restores your unsent draft. Each terminal retains its own latest 100 entries for this session. Recall restores encoding, escape handling, and line ending; manual sends, presets, and repeat starts each add one entry, consecutive identical commands are deduplicated, and rejected sends are excluded. Recalled repeat commands send once when you press Enter; use **Start repeat** to repeat them again. Invalid input is rejected before any bytes are queued. TX rows report bytes accepted by the serial writer.
-5. Select the **Repeat** tool beneath the receive canvas. Set **Repeat every** in milliseconds, choose a finite count or **Until stopped**, and click **Start repeat**. The count includes the initial send. Each terminal has one independent repeat job; its progress counts fully written payloads. The job takes a snapshot of the encoded payload, so editing the send box does not alter an active repeat. **Stop repeat**, disconnecting, closing the tab, or a device fault stops further repeated writes. Bytes already accepted by the serial driver cannot be recalled. Intervals are best-effort and begin after each full write, without catch-up bursts.
-6. Choose **Line**, **Raw Chunks**, or **Hex** independently in each terminal. Line mode assembles RX across serial reads; **Auto** accepts CRLF, LF, and CR (including CRLF split between events). The delimiter selector can also require LF, CRLF, or CR exactly; other control bytes remain escaped. Completed lines omit their terminator, empty lines get their own row, and unterminated data stays visible as **[partial]**. Valid UTF-8 is readable even when split across reads; invalid bytes are escaped. Line timestamps refer to the first byte. Hover an RX line for its byte count (including line endings), observed span between its first and last OS read events, and theoretical wire time using the baud/data/parity/stop bits active when received. A single read shows `0.0 ms / single read`; this is not a physical arrival measurement. Partial lines show timing so far, and display-truncated lines still count every received byte. Changing serial settings or the display delimiter does not reinterpret old bytes with the new baud rate. TX keeps its own event row and never flushes pending RX. Raw Chunks and Hex show the original event boundaries, sequence numbers, and exact escaped/hex bytes. Switching modes keeps both raw history and pending RX. Mode and delimiter are saved per terminal; older workspace Hex preferences remain supported.
-7. Open **Display…** for delimiter, timestamps (UTC), visible control characters, auto-scroll, pause, **Copy All**, and clear controls. Clear resets both display histories and pending RX. Pause display discards new rows while serial I/O continues; an RX gap resets pending assembly so bytes across a pause are not joined. Changing the delimiter rebuilds Line view from retained raw history.
-8. **Workspace…** provides explicit Save to file and Load workspace actions. Loading validates the file before replacing the layout, disconnects current resources, and restores terminals disconnected. Cancel changes nothing. Save the default workspace with **Save Workspace** or **Ctrl+S**, or quit normally to save it automatically to `$XDG_CONFIG_HOME/signal-forge/workspace.json` (or `~/.config/signal-forge/workspace.json`). Restart restores split ratios, stacked/active tabs, floating window positions/sizes, terminal display and send options, per-device serial settings, recent devices, and the selected preset profile. Every restored terminal is disconnected: reconnect explicitly. Payload drafts, traffic history, repeats, bridges, captures, and owned PTYs are session-only and never restart automatically. Corrupt/unsupported configuration is reported and preserved; saving stays disabled until repair or **Back up original and reset workspace**. That recovery action keeps an exact numbered `.json.recovery-N` backup for manual recovery of settings. Version 1 port settings migrate to version 2 when next saved.
+Open **Help** or press **F1** for the bundled, searchable offline guide. Browse topics, follow related links, and use Back or Alt+Left to return. Esc closes the guide; reopening remembers its last topic during this session. Search matches workflow text, diagnostic terms, and stable topic IDs.
 
-Each terminal retains up to 2,000 raw events and 2,000 completed Line/TX rows, plus a pending RX line. Line payloads are capped at 64 KiB with an explicit display truncation marker; raw bytes, statistics, bridges, and captures remain unchanged. RX and TX have distinct labels and colors. Binary bytes are rendered with escapes in text mode. A bounded monitoring queue reports dropped events in the status bar. Monitoring is best-effort, not a lossless capture mechanism.
+Read the [full user guide](docs/user-guide.md) for connections, terminal views, sends/checksums, files/recording, analysis, virtual pairs, bridges, SSH, workspaces, sessions, and troubleshooting. Supported controls show concise tooltips; ten seconds of continuous hover opens an explanation with **Learn more**. Dismissal lasts until the pointer leaves. Extended hover help can be disabled for this session inside the guide.
 
-## Remote serial
-
-Saved SSH hosts have an asynchronous sidebar port browser with direct Open/Refresh and Edit Host actions. Remote endpoint cards offer in-place editing; address/device changes preserve terminal identity and preset references. See [remote browsing and editing](docs/remote-serial.md#saved-host-browser).
-
-Open **New Port**, enable **Remote serial over SSH**, and use an SSH host/config
-alias with your existing keys or agent. Discover remote Linux devices or enter a
-device path, choose serial framing, and open it as a normal endpoint. Host-key
-verification remains strict. Remote hosts need Python 3; the client needs OpenSSH.
-Workspaces save non-secret host/endpoint settings and restore them disconnected.
-See [remote serial setup, tools and tests](docs/remote-serial.md).
-
-The **Files / RX** terminal tool sends files and records received bytes in Raw,
-ASCII, or Hex mode for either local or remote endpoints. See
-[file sending and RX recording](docs/terminal-files.md).
-
-## Traffic analysis
-
-Use a terminal’s **Analysis…** menu for Text, Hex, and byte-regex search, content
-filters, highlight rules, and optional timing/response annotations. **Display…**
-controls RX/TX visibility and direction labels independently. **Statistics…**
-shows totals, rates, line counts, RX gaps, and observed response latency, with a
-reset that preserves history. See [traffic analysis](docs/traffic-analysis.md).
-
-## Preset profiles
-
-The left sidebar contains the active profile and quick command buttons. Click an endpoint card or terminal pane to select its target, then click a preset name to send. A terminal’s **Presets** tool offers the same commands for that pane. **Manage…** or the toolbar’s **Presets…** opens the library editor. **New preset** opens an editor for name, payload, encoding, escapes, line ending, selected/fixed endpoint target, description, shortcut, and optional repeat settings. **Edit**, **Delete**, **Up**, and **Down** update the profile immediately. A repeating preset refuses to replace a running repeat; stop that job first.
-
-Create named device/project profiles with **Create profile**. Changes are validated and saved separately from workspace settings in `signal-forge/presets.json` under the configuration directory. Presets never send merely because a profile is loaded or imported. Invalid or unsupported files are preserved and reported rather than silently replaced.
-
-Use **Export profile** and **Import profile** with a JSON file path. The human-readable format is `{ "version": 1, "profile": { "name": "Bench", "presets": [...] } }`; it preserves all send and repeat settings. Import replaces a profile with the same name and rejects invalid payloads, schedules, or conflicting shortcuts before modifying the library. Shortcuts are **Ctrl+1** through **Ctrl+9**, scoped to the active profile and suppressed while editing text or a preset.
-
-## Virtual pairs and bridges
-
-Click **Virtual Pair** in the toolbar/sidebar (or **Ctrl+Shift+N**) to open setup, enter a pair name, and confirm **Create pair**. Cancel creates no resources. The two raw Linux PTY paths are displayed with **Copy path** and **Open A/B** actions. External programs can open either end; bytes written to A arrive at B and vice versa. Multiple pairs are independent. Optionally enter a writable **Link directory** to create `<name>-a` and `<name>-b` symlinks. Existing paths are never overwritten, and failed creation rolls back any link already created.
-
-**Remove pair** disconnects its app terminals and releases its relay and owned links. Closing the application does the same; **Ctrl+Q** closes the application normally. PTY paths last only for the lifetime of the pair. The internal relay uses bounded buffers and retains partial writes under backpressure; it does not require `socat`.
-
-Open two terminals, click **Bridge** (or **Ctrl+Shift+B**), choose connected endpoints **A** and **B** in setup, then confirm **Start bridge**. Cancel leaves forwarding unchanged. Bridges support serial devices and PTY paths using the same endpoint interface. Each endpoint can belong to one running bridge. RX from A is sent to B and RX from B is sent to A; manual and repeated sends remain available and serialize with bridge writes.
-
-The lower bridge monitor labels each direction **A → B** or **B → A**. **Pause display** (or **Ctrl+Shift+M** for all bridge monitors) discards new display rows while forwarding continues. **Stop / remove** leaves both endpoints open. Disconnecting either endpoint faults the bridge; restoring a connection requires starting a new bridge explicitly. Bounded monitor queues can drop display events without affecting forwarded bytes. Transport write failures fault the bridge; already accepted bytes cannot be recalled.
-
-## Bridge traffic inspector and captures
-
-Select a bridge in the lower **Traffic inspector**. Its identity, state, filters, and capture controls remain above the scrolling rows. Each row aligns UTC time, direction, byte count, ASCII escapes, and raw hex; hover for full timestamp/sequence metadata or truncated payloads. **Delta** adds the time since the previous observed chunk; it uses the complete chronological stream even when direction filters hide rows. Choose **Both directions**, **A → B**, or **B → A** without discarding the other direction's retained history. Sequence gaps are marked explicitly. The inspector retains at most 1,000 chunks per bridge and renders only visible rows; **Auto-scroll**, **Clear display**, and **Pause display** control presentation.
-
-Open **Capture file…**, enter a writable path, and click **Record**. **Ctrl+Shift+R** starts/stops recording on the first bridge. Recording always includes both directions, independently of display filters, clear, and pause. A dedicated worker streams raw bytes and metadata directly to disk through its own bounded queue. Existing files are never overwritten; choose a new filename to start another capture. **Stop capture** changes the state to **Finishing**, then **Completed** after queued events and the end summary are saved. Endpoint faults, removing a bridge, and normal shutdown also finish recording.
-
-Captures use [versioned JSON Lines](./docs/capture-format.md), with raw byte arrays, exact Unix nanosecond timestamps, signed deltas, source IDs, and direction. The footer records the capture's own dropped-event count; overloaded captures report incomplete data while forwarding continues. UI history limits do not limit file length. Files without a footer were interrupted or encountered a write failure.
+![Offline user guide](docs/help-guide.png)
 
 ## Architecture
 
@@ -108,6 +54,7 @@ Captures use [versioned JSON Lines](./docs/capture-format.md), with raw byte arr
 - `inspector`: bounded display history, UTC timestamp formatting, chronological deltas, and direction filters.
 - `capture`: streaming JSON Lines writer, independent bounded subscriptions, integrity summaries, and controlled shutdown.
 - `config` / `workspace`: validated versioned workspace persistence, v1 migration, disconnected restoration, backup recovery, and durable atomic replacement.
+- `help`: stable topic IDs, offline content from `docs/user-guide.md`, search and continuous-hover timing. `app/help_ui` owns guide navigation and contextual popup presentation.
 - `app`: device controls and dock layout. `app/terminal_ui` composes separate serial-settings, display-controls, connection-status, virtualized traffic, send, repeat, and footer sections. `app/workbench_ui` owns toolbar/sidebar navigation, setup drafts, preset-library access, and live tiling. `app/theme` owns the shared navy/canvas palette, RX/TX and status colors, typography, compact spacing, and primary/danger buttons for all UI surfaces.
 
 A slow subscriber loses monitoring events instead of blocking a serial worker. Sequence numbers expose gaps. Bridges forward through a dedicated transport RX route into the destination writer, independently of the lossy monitor bus. Independent read handles keep both RX directions active while writes are serialized. Closing a terminal stops its worker and drops its device handle; closing the application drops all terminals.
@@ -116,6 +63,8 @@ A slow subscriber loses monitoring events instead of blocking a serial worker. S
 
 | Shortcut | Action |
 | --- | --- |
+| F1 / Esc in Help / Alt+Left | Open guide / close guide / previous help topic |
+| Ctrl+F in Help | Focus guide search |
 | Enter / Up / Down in payload | Send / recall older / return toward draft |
 | Ctrl+L | Focus the selected terminal payload (outside text editing) |
 | Ctrl+O | Open new-port setup (outside text editing) |
@@ -206,38 +155,3 @@ with `--help` in CI. Physical adapters and electrical flow/parity behavior requi
 a local bench and are not claimed as PTY test coverage.
 
 Application icons are generated from [the canonical artwork](assets/signal-forge-source.png) with `python3 scripts/generate-icons.py`. The window embeds its icon and uses the `signal-forge` application ID to match the launcher on Linux. Self-update installs the verified release's launcher, icons, documentation and uninstall helper alongside the executable, with rollback of both executable and assets on a failed restart. Old executable-only installs acquire the embedded launcher/icons on first launch after updating. Standalone binaries outside a recognized installation do not create desktop files.
-
-### Selecting terminal history
-
-Drag across terminal text to select characters across rows. Drag above or below
-its viewport to scroll through retained history; scrolling preserves selection.
-Click terminal text to focus it, then **Ctrl+A** selects retained displayed text
-and **Ctrl+C** copies the selection. **Display… → Copy All** copies the retained
-view without changing traffic. Payload editors keep their usual Ctrl+A/C behavior.
-Starting a selection turns off auto-scroll; enable it again under **Display…**.
-Selection applies to Line, Raw Chunks, and Hex views. Evicted history is removed
-from selection; clear, view-mode, delimiter, or representation changes reset it.
-
-**Show Control Characters** makes CR, LF, TAB, and NUL visible as `\r`, `\n`,
-`\t`, and `\0`; other controls use hexadecimal escapes. Line view includes the
-actual recognized terminator, including CRLF split across reads. The option is
-saved per terminal in the workspace and changes only presentation and copied
-text; recordings, captures, bridges, and transport bytes remain unchanged.
-
-## Triggered capture and replay
-
-**Triggered capture** retains bounded pre-trigger RX/TX traffic and records around manual, text/hex/regex, or RX-after-idle triggers. **Replay…** opens Raw, Hex, or JSONL recordings as paused, read-only endpoints with play/pause/reset/step, original timing, and maximum-speed controls. Replay uses the normal terminal views and analysis tools and can feed a live endpoint through a one-way bridge. See [capture and replay](docs/capture-replay.md) for window limits, formats, pacing, and cancellation semantics.
-
-## Debug/test sessions
-
-**Session…** (**Ctrl+Shift+E**) creates or opens named session folders with readable workspace snapshots, notes, and an artifact index. Recordings and captures default into the active folder. Closing finalizes them while keeping connections open; reopening restores terminals disconnected. See [session workflows and portability](docs/sessions.md).
-
-## Virtual link timing and external clients
-
-Virtual-pair setup offers **Unlimited** or **Emulated baud** with shared framing and independent full-duplex pacing. External programs use the peer of the side opened in Signal Forge. **Check paths/access** diagnoses ownership and permissions; **Release stale exclusive flag** recovers a side after an external client exits. All of this runs with ordinary user permissions. See [virtual pair compatibility and timing](docs/virtual-pairs.md).
-
-### Selection Inspector
-
-Highlight terminal traffic to inspect exact payload bytes, escaped ASCII/text, hex, observed event timing, calculated serial wire time and checksums. Selection XOR includes every selected byte; standard `$`/`!` NMEA validation is shown separately. See [selection semantics and timing](docs/selection-inspector.md).
-
-Automatic TX XOR checksums support ASCII hex, `*XX`, and raw-byte output, optional first-byte exclusion, presets and repeats. See [TX checksum ordering and examples](docs/tx-checksum.md).

@@ -1,5 +1,6 @@
 mod analysis_ui;
 mod baud_ui;
+mod help_ui;
 mod replay_ui;
 mod selection_ui;
 mod session_ui;
@@ -308,6 +309,7 @@ impl Terminal {
 }
 
 struct TerminalViewer<'a> {
+    allow_keyboard_send: bool,
     bus: &'a TrafficBus,
     artifacts: &'a mut Vec<(std::path::PathBuf, signal_forge::session::ArtifactKind)>,
     selected: &'a mut Option<EndpointId>,
@@ -398,6 +400,7 @@ impl TabViewer for TerminalViewer<'_> {
 }
 
 pub struct Workbench {
+    help: help_ui::HelpUi,
     remote_browser: std::collections::HashMap<String, remote_ui::HostBrowser>,
     remote_edit: Option<remote_ui::RemoteEdit>,
     session: Option<signal_forge::session::Session>,
@@ -463,6 +466,7 @@ impl Workbench {
         let mut app = Self {
             session: None,
             session_ui: Default::default(),
+            help: Default::default(),
             pending_artifacts: Vec::new(),
             updater: update_ui::UpdateController::new(update_enabled, restart, update_failure),
             setup: None,
@@ -706,6 +710,7 @@ impl eframe::App for Workbench {
             }
         }
         ctx.request_repaint_after(Duration::from_millis(33));
+        self.help.begin_frame(ctx);
         self.toolbar_ui(ctx);
         self.replay_setup_ui(ctx);
         self.session_panel(ctx);
@@ -738,11 +743,13 @@ impl eframe::App for Workbench {
         });
         self.workbench_sidebar(ctx);
         self.preset_editor(ctx);
-        if self.setup.is_none() {
+        if self.setup.is_none() && !self.help.open {
             self.preset_shortcuts(ctx);
         }
-        self.connection_shortcuts(ctx);
-        self.workspace_shortcuts(ctx);
+        if !self.help.open {
+            self.connection_shortcuts(ctx);
+            self.workspace_shortcuts(ctx);
+        }
         self.bridge_monitors(ctx);
         let presets = self.library.profiles[self.profile_index].presets.clone();
         let mut preset_request = None;
@@ -766,6 +773,7 @@ impl eframe::App for Workbench {
                     DockArea::new(&mut self.dock).show_inside(
                         ui,
                         &mut TerminalViewer {
+                            allow_keyboard_send: !self.help.open,
                             bus: &self.bus,
                             artifacts: &mut self.pending_artifacts,
                             selected: &mut self.selected,
@@ -777,7 +785,9 @@ impl eframe::App for Workbench {
                     );
                 }
             }).response.rect;
-        self.payload_shortcut(ctx);
+        if !self.help.open {
+            self.payload_shortcut(ctx);
+        }
         if self.setup.is_none() && self.replay_setup.is_none() {
             if let Some((_, tab)) = self
                 .dock
@@ -796,5 +806,33 @@ impl eframe::App for Workbench {
         self.remote_editor(ctx);
         self.update_prompt(ctx);
         self.collect_session_artifacts();
+        // Invalidate pending help when dialogs change; controls inside them can
+        // start a fresh hover. Response hit testing respects egui's modal layers.
+        let update_dialog = !matches!(
+            self.updater.state,
+            update_ui::UpdateState::Checking
+                | update_ui::UpdateState::Quiet
+                | update_ui::UpdateState::Deferred
+        );
+        let file_dialog = self.dock.iter_all_tabs().any(|(_, tab)| {
+            tab.file_dialog
+                .as_ref()
+                .is_some_and(|(dialog, _)| dialog.state() == egui_file_dialog::DialogState::Open)
+                || tab.trigger.picker_open()
+        });
+        let flags = [
+            self.setup.is_some(),
+            self.replay_setup.is_some(),
+            self.remote_edit.is_some(),
+            self.preset_editor_open,
+            self.preset_library_open,
+            self.session_ui.open,
+            update_dialog,
+            file_dialog,
+        ];
+        let help_scope = flags.iter().enumerate().fold(0u16, |scope, (bit, active)| {
+            scope | (u16::from(*active) << bit)
+        });
+        self.help.show(ctx, help_scope);
     }
 }

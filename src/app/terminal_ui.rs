@@ -1,4 +1,5 @@
 //! Terminal presentation sections; transport actions remain on the existing endpoints.
+use super::help_ui::explain;
 use super::*;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -130,7 +131,7 @@ impl TerminalViewer<'_> {
                     &format!("{}:Hex", tab.endpoint.id().0),
                 );
             }
-            ui.menu_button("Display…", |ui| {
+            let display_menu = ui.menu_button("Display…", |ui| {
                 ui.style_mut().wrap_mode = None;
                 let previous = tab.lines.delimiter;
                 egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "receive-delimiter"))
@@ -180,9 +181,15 @@ impl TerminalViewer<'_> {
                             "TX only",
                         );
                     });
-                ui.checkbox(&mut tab.analysis.direction_labels, "Show RX/TX labels");
+                explain(
+                    ui.checkbox(&mut tab.analysis.direction_labels, "Show RX/TX labels"),
+                    "terminal.control_characters",
+                );
                 ui.checkbox(&mut tab.timestamps, "Timestamps");
-                ui.checkbox(&mut tab.show_controls, "Show Control Characters");
+                explain(
+                    ui.checkbox(&mut tab.show_controls, "Show Control Characters"),
+                    "terminal.control_characters",
+                );
                 if old != (tab.timestamps, tab.show_controls) {
                     tab.selection.clear();
                 }
@@ -198,7 +205,10 @@ impl TerminalViewer<'_> {
                     ui.close_menu();
                 }
                 ui.checkbox(&mut tab.auto_scroll, "Auto-scroll");
-                ui.checkbox(&mut tab.paused, "Pause display");
+                explain(
+                    ui.checkbox(&mut tab.paused, "Pause display"),
+                    "terminal.control_characters",
+                );
                 if ui.button("Clear").clicked() {
                     tab.selection.clear();
                     tab.view.dirty = true;
@@ -210,6 +220,7 @@ impl TerminalViewer<'_> {
                     tab.rx_gap = false;
                 }
             });
+            explain(display_menu.response, "terminal.control_characters");
             Self::analysis_controls(ui, tab);
             if tab.paused {
                 ui.colored_label(theme::WARNING, "Paused");
@@ -796,7 +807,7 @@ impl TerminalViewer<'_> {
             // Consume these keys before TextEdit: Enter otherwise surrenders focus,
             // and arrows would move the caret instead of recalling a command.
             let (enter, older, newer) = ui.input_mut(|input| {
-                if !focused {
+                if !focused || !self.allow_keyboard_send {
                     return (false, false, false);
                 }
                 (
@@ -842,6 +853,7 @@ impl TerminalViewer<'_> {
                 )),
             );
             theme::trace_control(&response, &format!("{}:Send payload", tab.endpoint.id().0));
+            explain(response.clone(), "tx.payload");
             if response.clicked() || (enter && focused) {
                 tab.send();
             }
@@ -856,14 +868,26 @@ impl TerminalViewer<'_> {
                         Encoding::Hex => "Hex",
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut tab.encoding, Encoding::Text, "Text");
-                        ui.selectable_value(&mut tab.encoding, Encoding::Hex, "Hex bytes");
+                        explain(
+                            ui.selectable_value(&mut tab.encoding, Encoding::Text, "Text"),
+                            "tx.payload",
+                        );
+                        explain(
+                            ui.selectable_value(&mut tab.encoding, Encoding::Hex, "Hex bytes"),
+                            "tx.payload",
+                        );
                     });
             } else {
-                ui.selectable_value(&mut tab.encoding, Encoding::Text, "Text");
-                ui.selectable_value(&mut tab.encoding, Encoding::Hex, "Hex bytes");
+                explain(
+                    ui.selectable_value(&mut tab.encoding, Encoding::Text, "Text"),
+                    "tx.payload",
+                );
+                explain(
+                    ui.selectable_value(&mut tab.encoding, Encoding::Hex, "Hex bytes"),
+                    "tx.payload",
+                );
             }
-            egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "ending"))
+            let ending = egui::ComboBox::from_id_salt((tab.endpoint.id().0.clone(), "ending"))
                 .width(if ui.max_rect().width() < 450.0 {
                     55.0
                 } else {
@@ -884,7 +908,8 @@ impl TerminalViewer<'_> {
                         ui.selectable_value(&mut tab.ending, value, label);
                     }
                 });
-            ui.add_enabled(
+            explain(ending.response, "tx.ending");
+            let escapes = ui.add_enabled(
                 tab.encoding == Encoding::Text,
                 egui::Checkbox::new(
                     &mut tab.escapes,
@@ -895,6 +920,7 @@ impl TerminalViewer<'_> {
                     },
                 ),
             );
+            explain(escapes, "tx.payload");
             checksum_controls(ui, &mut tab.checksum, &tab.input, tab.encoding, tab.escapes);
         });
     }
@@ -999,7 +1025,7 @@ impl TerminalViewer<'_> {
         ui.label("Send file");
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut tab.file_path).desired_width(160.0));
-            if ui.button("Browse…").clicked() {
+            if explain(ui.button("Browse…"), "tx.file").clicked() {
                 Self::open_file_dialog(tab, false);
             }
             if ui
@@ -1095,7 +1121,7 @@ impl TerminalViewer<'_> {
                 "RX path",
                 egui::TextEdit::singleline(&mut tab.recording_path).desired_width(160.0),
             );
-            if ui.button("Save as…").clicked() {
+            if explain(ui.button("Save as…"), "recording.rx").clicked() {
                 Self::open_file_dialog(tab, true);
             }
             if ui
@@ -1227,6 +1253,7 @@ pub(super) fn checksum_controls(
         ui.weak("Escaped CR/LF inside the payload participate in XOR.");
     });
     theme::trace_control(&response.response, "Checksum options");
+    explain(response.response, "tx.checksum");
 }
 
 #[cfg(test)]
@@ -1296,6 +1323,7 @@ mod timing_hover_tests {
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
                         TerminalViewer {
+                            allow_keyboard_send: true,
                             artifacts: &mut Vec::new(),
                             bus: &bus,
                             selected: &mut selected,
@@ -1511,6 +1539,7 @@ mod timing_hover_tests {
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
                         TerminalViewer {
+                            allow_keyboard_send: true,
                             artifacts: &mut Vec::new(),
                             bus: &bus,
                             selected: &mut selected,

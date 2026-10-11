@@ -37,3 +37,5 @@ pub mod session;
 pub mod selection_inspector;
 
 pub mod remote_config;
+
+pub mod help;
