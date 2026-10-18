@@ -9,7 +9,8 @@ import termios
 try:
     if sys.argv[1] in ('discover', 'discover-details'):
         paths = sorted(set(glob.glob('/dev/serial/by-id/*'))) + sorted(set(
-            glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*') + glob.glob('/dev/ttyS*')))
+            glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*') + glob.glob('/dev/ttyS*') +
+            glob.glob('/dev/ttyLP[0-9]*')))
         devices = []
         seen = set()
         for path in paths:
