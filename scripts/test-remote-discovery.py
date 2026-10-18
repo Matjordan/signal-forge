@@ -19,6 +19,21 @@ class DiscoveryTests(unittest.TestCase):
         paths={'/dev/serial/by-id/*':['/dev/serial/by-id/b','/dev/serial/by-id/a'], '/dev/ttyUSB*':['/dev/ttyUSB0','/dev/ttyUSB1'], '/dev/ttyACM*':['/dev/ttyACM0']}
         targets={'/dev/serial/by-id/a':'/dev/ttyUSB0','/dev/serial/by-id/b':'/dev/ttyUSB0'}
         self.assertEqual(self.discover(paths,targets),[{'path':'/dev/serial/by-id/a','target':'/dev/ttyUSB0'},{'path':'/dev/ttyACM0','target':'/dev/ttyACM0'},{'path':'/dev/ttyUSB1','target':'/dev/ttyUSB1'}])
+    def test_ttylp_ports_and_by_id_alias_precedence(self):
+        paths = {
+            '/dev/serial/by-id/*': ['/dev/serial/by-id/lpuart'],
+            '/dev/ttyLP[0-9]*': ['/dev/ttyLP7', '/dev/ttyLP0', '/dev/ttyLP12'],
+        }
+        targets = {'/dev/serial/by-id/lpuart': '/dev/ttyLP0'}
+        self.assertEqual(self.discover(paths, targets), [
+            {'path': '/dev/serial/by-id/lpuart', 'target': '/dev/ttyLP0'},
+            {'path': '/dev/ttyLP12', 'target': '/dev/ttyLP12'},
+            {'path': '/dev/ttyLP7', 'target': '/dev/ttyLP7'},
+        ])
+        self.assertEqual(self.discover(paths, targets, 'discover'), [
+            '/dev/serial/by-id/lpuart', '/dev/ttyLP12', '/dev/ttyLP7',
+        ])
+
     def test_empty_and_legacy_path_response(self):
         self.assertEqual(self.discover({},{}),[])
         self.assertEqual(self.discover({'/dev/ttyS*':['/dev/ttyS0']},{},'discover'),['/dev/ttyS0'])
